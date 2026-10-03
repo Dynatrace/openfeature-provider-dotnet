@@ -1,0 +1,44 @@
+name: CI
+
+on:
+    pull_request:
+        branches:
+            - main
+    merge_group:
+
+concurrency:
+    group: ci-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+jobs:
+    build:
+        name: Build and Test
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+            - name: Set up .NET
+              uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+              with:
+                  dotnet-version: |
+                      8.0.x
+                      10.0.x
+
+            - name: Restore
+              run: dotnet restore
+
+            - name: Check formatting
+              run: dotnet format --verify-no-changes --no-restore
+
+            - name: Build
+              run: dotnet build --configuration Release --no-restore
+
+            - name: Test
+              run: dotnet test --configuration Release --no-build
+
+            - name: Pack
+              run: dotnet pack src/Dynatrace.OpenFeature --configuration Release --no-build --output ./artifacts

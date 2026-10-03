@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.0</TargetFramework>
+        <RootNamespace>Dynatrace.OpenFeature</RootNamespace>
+        <AssemblyName>Dynatrace.OpenFeature</AssemblyName>
+
+        <PackageId>Dynatrace.OpenFeature</PackageId>
+        <Title>Dynatrace OpenFeature Provider for .NET</Title>
+        <Description>The official Dynatrace OpenFeature provider for .NET.</Description>
+        <PackageTags>openfeature;feature-flags;feature-management;dynatrace</PackageTags>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="OpenFeature" />
+        <!-- TODO: replace with the extracted flagd core package once it is available. -->
+        <PackageReference Include="OpenFeature.Providers.Flagd" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="$(MSBuildThisFileDirectory)../../README.md" Pack="true" PackagePath="/" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="Dynatrace.OpenFeature.Tests" />
+    </ItemGroup>
+
+</Project>

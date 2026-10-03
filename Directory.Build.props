@@ -1,0 +1,23 @@
+<Project>
+
+    <PropertyGroup>
+        <LangVersion>latest</LangVersion>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>disable</ImplicitUsings>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+        <Deterministic>true</Deterministic>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <Version>0.1.0-alpha</Version> <!-- x-release-please-version -->
+        <Authors>Dynatrace</Authors>
+        <Company>Dynatrace</Company>
+        <Copyright>Copyright Dynatrace LLC</Copyright>
+        <RepositoryUrl>https://github.com/Dynatrace/openfeature-provider-dotnet</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Dynatrace/openfeature-provider-dotnet</PackageProjectUrl>
+        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    </PropertyGroup>
+
+</Project>
