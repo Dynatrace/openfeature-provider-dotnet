@@ -12,9 +12,7 @@ namespace Dynatrace.OpenFeature.Tests;
 /// </remarks>
 public class RetryBoundInvariantTests
 {
-    // Polling is not implemented yet; this is the spec's shortest poll interval (the SSE-disconnected cadence).
-    // Replace with the provider's constant once it exists.
-    private static readonly TimeSpan ShortestPollInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ShortestPollInterval = DynatraceProvider.PollIntervalSseDisconnected;
 
     [Fact]
     public void MaxFetchDuration_IsShorterThanTheShortestPollInterval()
@@ -33,5 +31,6 @@ public class RetryBoundInvariantTests
         Assert.Equal(TimeSpan.FromSeconds(4), CdnFetcher.RequestTimeout);
         Assert.Equal(2, RetryStrategy.MaxAttempts);
         Assert.Equal(TimeSpan.FromMilliseconds(120), RetryStrategy.MaxTotalBackoff);
+        Assert.Equal(TimeSpan.FromSeconds(10), DynatraceProvider.PollIntervalSseDisconnected);
     }
 }
