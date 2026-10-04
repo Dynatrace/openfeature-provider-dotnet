@@ -20,4 +20,10 @@
         <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     </PropertyGroup>
 
+    <!-- Local NuGet feed for unpublished packages (e.g. OpenFeature.Providers.Flagd.Core built from
+         dotnet-sdk-contrib). Git-ignored; see CONTRIBUTING.md. Ignored when the folder does not exist. -->
+    <PropertyGroup Condition="Exists('$(MSBuildThisFileDirectory).local-packages')">
+        <RestoreAdditionalProjectSources>$(MSBuildThisFileDirectory).local-packages</RestoreAdditionalProjectSources>
+    </PropertyGroup>
+
 </Project>

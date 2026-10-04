@@ -7,6 +7,19 @@
 
 The library itself targets `netstandard2.0`.
 
+## Unpublished flagd core
+
+The provider depends on `OpenFeature.Providers.Flagd.Core`, which lives in
+[dotnet-sdk-contrib](https://github.com/open-feature/dotnet-sdk-contrib) and is not published to NuGet yet.
+Until it is, pack it into a git-ignored local feed (restore picks up `.local-packages/` automatically):
+
+```bash
+cd <dotnet-sdk-contrib checkout>
+dotnet pack src/OpenFeature.Providers.Flagd.Core -c Release -o <this repo>/.local-packages
+```
+
+CI cannot restore the package until it is published.
+
 ## Building
 
 ```bash

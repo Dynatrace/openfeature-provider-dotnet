@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "version": "1741780800",
+    "projectKey": "dotnet-provider-tests",
+    "releaseStageKey": "development",
+    "flagSetId": "dotnet-provider-tests/development",
+    "tenant": "abc12345"
+  },
+  "flags": {
+    "my-bool-flag": {
+      "state": "ENABLED",
+      "defaultVariant": "on",
+      "variants": { "on": true, "off": false }
+    },
+    "my-string-flag": {
+      "state": "ENABLED",
+      "defaultVariant": "hello",
+      "variants": { "hello": "world" }
+    },
+    "my-int-flag": {
+      "state": "ENABLED",
+      "defaultVariant": "two",
+      "variants": { "one": 1, "two": 2 }
+    },
+    "my-double-flag": {
+      "state": "ENABLED",
+      "defaultVariant": "pi",
+      "variants": { "pi": 3.14, "e": 2.71 }
+    },
+    "my-object-flag": {
+      "state": "ENABLED",
+      "defaultVariant": "cfg",
+      "variants": { "cfg": { "retries": 3, "name": "x" } }
+    },
+    "my-targeted-flag": {
+      "state": "ENABLED",
+      "defaultVariant": "off",
+      "variants": { "off": false, "on": true },
+      "targeting": {
+        "if": [ { "==": [ { "var": "email" }, "test@dynatrace.com" ] }, "on", "off" ]
+      }
+    }
+  }
+}
