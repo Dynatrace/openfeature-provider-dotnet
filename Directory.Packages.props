@@ -7,6 +7,12 @@
     <ItemGroup>
         <PackageVersion Include="OpenFeature" Version="2.14.1" />
         <PackageVersion Include="OpenFeature.Providers.Flagd.Core" Version="0.1.0" />
+        <!-- Aligned with the versions OpenFeature.Providers.Flagd.Core pulls in transitively for netstandard2.0, and
+             declared explicitly: this library is compiled against exactly these assemblies, so they must flow to every
+             consumer. A consumer on a newer TFM would otherwise resolve the core's TFM-specific dependency group, get the
+             older inbox assemblies, and fail to load ours. -->
+        <PackageVersion Include="System.Text.Json" Version="10.0.5" />
+        <PackageVersion Include="System.Collections.Immutable" Version="10.0.5" />
 
         <!-- test only -->
         <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 using OpenFeature;
@@ -130,6 +131,31 @@ public class DynatraceProviderTests
     public async Task Initialize_InvalidJson_ThrowsParseError()
     {
         _server.Enqueue(MockResponse.Status(200).Body("not-json"));
+        var provider = Provider();
+
+        await Assert.ThrowsAsync<ParseErrorException>(() => provider.InitializeAsync(EvaluationContext.Empty));
+        await provider.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task Initialize_ConfigWithNonAsciiValuesAndAByteOrderMark_ResolvesExactly()
+    {
+        const string variant = "ünïcödé ☃";
+        var config = "{\"flags\":{\"my-string-flag\":{\"state\":\"ENABLED\",\"defaultVariant\":\"v\",\"variants\":{\"v\":\"" + variant + "\"}}}}";
+        var bytes = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(new System.Text.UTF8Encoding(false).GetBytes(config)).ToArray();
+        _server.Enqueue(MockResponse.Status(200).BodyBytes(bytes).Header("Content-Type", "application/json; charset=iso-8859-1"));
+        var provider = Provider();
+
+        await provider.InitializeAsync(EvaluationContext.Empty);
+
+        var result = await provider.ResolveStringValueAsync("my-string-flag", "default");
+        Assert.Equal(variant, result.Value);
+    }
+
+    [Fact]
+    public async Task Initialize_ResponseThatIsNotUtf8_ThrowsParseError()
+    {
+        _server.Enqueue(MockResponse.Status(200).BodyBytes(new byte[] { 0xC3, 0x28 }));
         var provider = Provider();
 
         await Assert.ThrowsAsync<ParseErrorException>(() => provider.InitializeAsync(EvaluationContext.Empty));
@@ -385,8 +411,13 @@ public class DynatraceProviderSdkTests : IAsyncLifetime
     private const string Domain = "dynatrace-tests";
 
     private readonly MockHttpServer _server = new MockHttpServer();
+    private readonly MockHttpServer _metricsServer = new MockHttpServer();
 
-    public Task InitializeAsync() => Task.CompletedTask;
+    public Task InitializeAsync()
+    {
+        _metricsServer.Dispatcher = (_, _) => Task.FromResult(MockResponse.Status(202));
+        return Task.CompletedTask;
+    }
 
     public Task DisposeAsync() => Api.Instance.ShutdownAsync();
 
@@ -397,7 +428,10 @@ public class DynatraceProviderSdkTests : IAsyncLifetime
         new CdnFetcher(
             DynatraceProvider.BuildCdnUrl(TestFixtures.SdkKey, null),
             _server.CreateClient(),
-            new RetryStrategy(new Random(42), (_, _) => Task.CompletedTask)));
+            new RetryStrategy(new Random(42), (_, _) => Task.CompletedTask)),
+        _metricsServer.CreateClient(),
+        DynatraceProvider.PollIntervalSseDisconnected,
+        DynatraceProvider.GracePeriod);
 
     [Fact]
     public async Task Client_EvaluatesFlagsFromCdnConfig()
