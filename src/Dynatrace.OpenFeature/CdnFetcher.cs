@@ -1,6 +1,7 @@
 using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -32,6 +33,8 @@ internal sealed class CdnFetcher
     /// <c>RetryBoundInvariantTests</c> guards.
     /// </summary>
     internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(4);
+
+    private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     /// <summary>Default Retry-After duration when a 429 has no usable header.</summary>
     private static readonly TimeSpan DefaultRetryAfter = TimeSpan.FromSeconds(60);
@@ -101,6 +104,7 @@ internal sealed class CdnFetcher
     /// <returns>A <see cref="FetchResult"/>; the body is null on 304, 429, a skip, or a stale-node response.</returns>
     /// <exception cref="HttpRequestException">Network failure after all retry attempts were exhausted.</exception>
     /// <exception cref="TimeoutException">Every attempt exceeded the request timeout.</exception>
+    /// <exception cref="FormatException">A success response whose body is not valid UTF-8.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     public async Task<FetchResult> FetchAsync(CancellationToken cancellationToken = default)
     {
@@ -175,10 +179,13 @@ internal sealed class CdnFetcher
 
             var newETag = response.Headers.ETag;
             var newLastModifiedAt = response.Content.Headers.LastModified;
-            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 
+            string? body = null;
             if (statusCode >= 200 && statusCode < 300)
             {
+                // Decoded before anything is cached, so the validators of a body we could not read never stand in for it.
+                body = DecodeUtf8(await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false));
+
                 // stale CDN node defense: reject 200 if Last-Modified isn't newer (CF nodes can serve old).
                 // missing Last-Modified: accept (no header = no check).
                 if (newLastModifiedAt is not null
@@ -198,6 +205,25 @@ internal sealed class CdnFetcher
             }
 
             return new FetchResult(statusCode, body, newETag?.ToString(), newLastModifiedAt);
+        }
+    }
+
+    /// <summary>
+    /// Decodes a configuration body as UTF-8, which is what JSON is by definition (RFC 8259), whatever charset the
+    /// response declares. A leading byte order mark is dropped, and invalid bytes are rejected rather than replaced:
+    /// a configuration with silently altered flag values is worse than one that fails to load.
+    /// </summary>
+    /// <exception cref="FormatException">The bytes are not valid UTF-8.</exception>
+    internal static string DecodeUtf8(byte[] bytes)
+    {
+        var offset = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
+        try
+        {
+            return StrictUtf8.GetString(bytes, offset, bytes.Length - offset);
+        }
+        catch (DecoderFallbackException e)
+        {
+            throw new FormatException("CDN response body is not valid UTF-8", e);
         }
     }
 

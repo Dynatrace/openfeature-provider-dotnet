@@ -162,6 +162,33 @@ public class DynatraceProviderPollingTests
         await provider.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task CorruptBodyWhilePolling_GoesStaleAndRecoversOnceTheCdnServesGoodBytes()
+    {
+        var corrupt = true;
+        var requests = 0;
+        _server.Dispatcher = (_, _) =>
+        {
+            if (Interlocked.Increment(ref requests) == 1)
+            {
+                return Task.FromResult(MockResponse.Status(200).Body(TestFixtures.FlagConfig));
+            }
+
+            return Task.FromResult(Volatile.Read(ref corrupt)
+                ? MockResponse.Status(200).BodyBytes(new byte[] { 0xC3, 0x28 })
+                : MockResponse.Status(200).Body(TestFixtures.FlagConfig));
+        };
+        var provider = FastProvider(TimeSpan.FromSeconds(10));
+        await provider.InitializeAsync(EvaluationContext.Empty);
+
+        await AwaitStateAsync(provider, ProviderStatus.Stale, 3_000);
+        Assert.True((await provider.ResolveBooleanValueAsync("my-bool-flag", false)).Value); // the loaded config keeps serving
+
+        Volatile.Write(ref corrupt, false);
+        await AwaitStateAsync(provider, ProviderStatus.Ready, 3_000);
+        await provider.ShutdownAsync();
+    }
+
     // -- failed initialization --
 
     [Fact]
@@ -426,8 +453,13 @@ public class DynatraceProviderPollingSdkTests : IAsyncLifetime
     private const string Domain = "dynatrace-polling-tests";
 
     private readonly MockHttpServer _server = new MockHttpServer();
+    private readonly MockHttpServer _metricsServer = new MockHttpServer();
 
-    public Task InitializeAsync() => Task.CompletedTask;
+    public Task InitializeAsync()
+    {
+        _metricsServer.Dispatcher = (_, _) => Task.FromResult(MockResponse.Status(202));
+        return Task.CompletedTask;
+    }
 
     public Task DisposeAsync() => Api.Instance.ShutdownAsync();
 
@@ -461,7 +493,7 @@ public class DynatraceProviderPollingSdkTests : IAsyncLifetime
             _server.CreateClient(),
             new RetryStrategy(new Random(42), (_, _) => Task.CompletedTask));
         var provider = new DynatraceProvider(
-            TestFixtures.SdkKey, null, new FlagdCore(), fetcher, TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(30));
+            TestFixtures.SdkKey, null, new FlagdCore(), fetcher, _metricsServer.CreateClient(), TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(30));
         await Api.Instance.SetProviderAsync(Domain, provider);
         Api.Instance.AddHandler(ProviderEventTypes.ProviderReady, _ => ready.CountDown());
         var client = Api.Instance.GetClient(Domain);
