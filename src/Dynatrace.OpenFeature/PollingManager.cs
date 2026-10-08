@@ -25,6 +25,7 @@ internal sealed class PollingManager
 {
     private readonly Func<CancellationToken, Task<FetchResult>> _fetchFlags;
     private readonly Func<string, IReadOnlyList<string>> _storeFlags;
+    private readonly Action _commitFetch;
     private readonly Action<IReadOnlyList<string>> _emitChange;
     private readonly Action _emitSuccess;
     private readonly Action<string> _emitFailure;
@@ -40,6 +41,7 @@ internal sealed class PollingManager
 
     /// <param name="fetchFlags">Called to fetch flag configuration JSON from the CDN.</param>
     /// <param name="storeFlags">Called to store the fetched JSON; returns the changed flag keys.</param>
+    /// <param name="commitFetch">Called after a successful store to promote the fetcher's staged validators.</param>
     /// <param name="emitChange">Called with the changed flag keys after a successful store.</param>
     /// <param name="emitSuccess">Called after any successful poll (including 304 not-modified).</param>
     /// <param name="emitFailure">Called with a reason when a poll fails.</param>
@@ -48,6 +50,7 @@ internal sealed class PollingManager
     public PollingManager(
         Func<CancellationToken, Task<FetchResult>> fetchFlags,
         Func<string, IReadOnlyList<string>> storeFlags,
+        Action commitFetch,
         Action<IReadOnlyList<string>> emitChange,
         Action emitSuccess,
         Action<string> emitFailure,
@@ -56,6 +59,7 @@ internal sealed class PollingManager
     {
         _fetchFlags = fetchFlags;
         _storeFlags = storeFlags;
+        _commitFetch = commitFetch;
         _emitChange = emitChange;
         _emitSuccess = emitSuccess;
         _emitFailure = emitFailure;
@@ -126,8 +130,7 @@ internal sealed class PollingManager
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Only Stop() cancels this token now that contended ticks are skipped rather than cancelled, so
-            // cancellation means "stopping", not a poll failure.
+            // only Stop() cancels this token, so cancellation means stopping, not a poll failure
             _logger?.LogDebug("poll cancelled (shutting down)");
         }
         catch (Exception e)
@@ -180,6 +183,7 @@ internal sealed class PollingManager
         }
 
         var changedKeys = _storeFlags(body!);
+        _commitFetch();
         _emitSuccess();
 
         if (changedKeys.Count > 0)

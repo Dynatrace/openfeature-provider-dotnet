@@ -18,6 +18,7 @@ public class PollingManagerTests : IDisposable
     private PollingManager Create(
         Func<CancellationToken, Task<FetchResult>> fetchFlags,
         Func<string, IReadOnlyList<string>>? storeFlags = null,
+        Action? commitFetch = null,
         Action<IReadOnlyList<string>>? emitChange = null,
         Action? emitSuccess = null,
         Action<string>? emitFailure = null,
@@ -26,6 +27,7 @@ public class PollingManagerTests : IDisposable
         _manager = new PollingManager(
             fetchFlags,
             storeFlags ?? (_ => NoKeys),
+            commitFetch ?? (() => { }),
             emitChange ?? (_ => { }),
             emitSuccess ?? (() => { }),
             emitFailure ?? (_ => { }),
@@ -56,6 +58,36 @@ public class PollingManagerTests : IDisposable
 
         Assert.True(await succeeded.WaitAsync(Timeout2s));
         Assert.True(stored >= 1);
+    }
+
+    [Fact]
+    public async Task SuccessfulPoll_CommitsAfterStoreAndBeforeSuccess()
+    {
+        var succeeded = new Latch();
+        var calls = new List<string>();
+
+        Create(
+            Returning(new FetchResult(200, "{}", null, null)),
+            storeFlags: _ =>
+            {
+                lock (calls) calls.Add("store");
+                return NoKeys;
+            },
+            commitFetch: () =>
+            {
+                lock (calls) calls.Add("commit");
+            },
+            emitSuccess: () =>
+            {
+                lock (calls) calls.Add("success");
+                succeeded.CountDown();
+            }).Start();
+
+        Assert.True(await succeeded.WaitAsync(Timeout2s));
+        lock (calls)
+        {
+            Assert.Equal(new[] { "store", "commit", "success" }, calls.Take(3));
+        }
     }
 
     [Fact]
@@ -104,6 +136,7 @@ public class PollingManagerTests : IDisposable
         Create(
             Returning(new FetchResult(200, string.Empty, null, null)),
             storeFlags: _ => throw new Exception("StoreFlags should not be called on an empty body"),
+            commitFetch: () => throw new Exception("CommitFetch should not be called on an empty body"),
             emitSuccess: () => throw new Exception("EmitSuccess should not be called on an empty body"),
             emitFailure: reason =>
             {
@@ -185,6 +218,7 @@ public class PollingManagerTests : IDisposable
         Create(
             Returning(new FetchResult(200, "{}", null, null)),
             storeFlags: _ => throw new InvalidOperationException("bad config"),
+            commitFetch: () => throw new Exception("CommitFetch should not be called when the store failed"),
             emitSuccess: () => throw new Exception("EmitSuccess should not be called when the store failed"),
             emitFailure: reason =>
             {
@@ -327,15 +361,13 @@ public class PollingManagerTests : IDisposable
     [Fact]
     public async Task ContendedPollTick_IsSkippedAndEmitsNothing()
     {
-        // KB 2.1.1: a contended tick must not cancel the in-flight fetch, and must emit
-        // neither success nor failure.
+        // KB 2.1.1: a contended tick neither cancels the in-flight fetch nor emits anything
         var firstWasCancelled = false;
         var successes = 0;
         var failures = 0;
         var attempts = 0;
 
-        // sampled from inside the in-flight fetch, so the assertions describe exactly the
-        // window during which ticks were contending
+        // sampled inside the in-flight fetch, i.e. while ticks contend
         var contendedAttempts = -1;
         var contendedSuccesses = -1;
         var contendedFailures = -1;

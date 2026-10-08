@@ -162,13 +162,48 @@ public class DynatraceProviderPollingTests
         await provider.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task EmptyBodyPoll_DoesNotRevalidateAgainstItsValidators()
+    {
+        // initial load, then an empty 200; afterwards a 304 only if asked with the empty body's ETag
+        var sentRejectedETag = false;
+        var requests = 0;
+        _server.Dispatcher = (request, _) =>
+        {
+            var n = Interlocked.Increment(ref requests);
+            if (n == 1)
+            {
+                return Task.FromResult(MockResponse.Status(200).Header("ETag", "\"v1\"").Body(TestFixtures.FlagConfig));
+            }
+
+            if (n == 2)
+            {
+                return Task.FromResult(MockResponse.Status(200).Header("ETag", "\"v2\"").Body(string.Empty));
+            }
+
+            if (request.GetHeader("If-None-Match") == "\"v2\"")
+            {
+                Volatile.Write(ref sentRejectedETag, true);
+            }
+
+            return Task.FromResult(MockResponse.Status(304));
+        };
+        var provider = FastProvider(TimeSpan.FromSeconds(10));
+        await provider.InitializeAsync(EvaluationContext.Empty);
+        await AwaitStateAsync(provider, ProviderStatus.Stale, 3_000);
+
+        // recovers by revalidating against the applied v1, never the rejected v2
+        await AwaitStateAsync(provider, ProviderStatus.Ready, 3_000);
+        await provider.ShutdownAsync();
+        Assert.False(Volatile.Read(ref sentRejectedETag));
+    }
+
     // -- failed initialization --
 
     [Fact]
     public async Task FailedInit_StillStartsPollingAndRecovers()
     {
-        // KB 2.4: a failed init recovers on the polling timer like any other failure. Without
-        // one, a transient 5xx at startup would wedge the provider in Error until restart.
+        // KB 2.4: a failed init recovers via polling instead of sticking in Error
         var requests = 0;
         _server.Dispatcher = (_, _) =>
         {
@@ -192,10 +227,7 @@ public class DynatraceProviderPollingTests
     [Fact]
     public async Task InvalidInitialConfig_DoesNotRecoverToReadyOnA304()
     {
-        // The initial 200 carries a body flagd-core rejects. CdnFetcher caches that response's
-        // ETag anyway, so the next poll revalidates and gets a 304. A 304 means "what you have
-        // is current", but nothing was ever applied, so recovering to Ready would advertise an
-        // empty flag store as healthy.
+        // rejected initial body; a 304 against its ETag would falsely recover to Ready
         const string badETag = "\"bad-config\"";
         _server.Dispatcher = (request, _) => Task.FromResult(
             request.GetHeader("If-None-Match") == badETag
@@ -235,10 +267,7 @@ public class DynatraceProviderPollingTests
     [Fact]
     public async Task SkippedPollTicks_DoNotResetTheGraceTimer()
     {
-        // KB 2.1.1: a skipped tick emits nothing. Reported as a success it would cancel grace
-        // on every tick, holding the provider in Ready for a whole CDN outage.
-        //
-        // Each failing response is delayed past the 50ms poll cadence, so most ticks contend.
+        // KB 2.1.1: skipped ticks emit nothing; failures are delayed past the cadence so ticks contend
         var requests = 0;
         _server.Dispatcher = async (_, ct) =>
         {
@@ -253,8 +282,7 @@ public class DynatraceProviderPollingTests
         var provider = FastProvider();
         await provider.InitializeAsync(EvaluationContext.Empty);
 
-        // The first real failure goes Stale and starts the grace timer; the skipped ticks in between must not keep
-        // cancelling it.
+        // first failure goes Stale; skipped ticks must not cancel the grace timer
         await AwaitStateAsync(provider, ProviderStatus.Error, 5_000);
         await provider.ShutdownAsync();
     }
@@ -262,8 +290,7 @@ public class DynatraceProviderPollingTests
     [Fact]
     public async Task ContendedTicks_DoNotPileUpRequests()
     {
-        // Single-flight: with responses slower than the cadence, the request count must track
-        // fetch duration, not tick count.
+        // single-flight: request count tracks fetch duration, not tick count
         var requests = 0;
         _server.Dispatcher = async (_, ct) =>
         {

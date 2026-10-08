@@ -42,8 +42,11 @@ internal sealed class CdnFetcher
     private readonly TimeSpan _requestTimeout;
     private readonly ILogger? _logger;
 
-    // mutated in DoFetchAsync under _fetchLock; also cleared by InvalidateCache() from other threads
+    // validators sent on the next request; promoted from _pendingState by Commit()
     private volatile CacheState _state = CacheState.Empty;
+
+    // validators of the last 2xx, held until the caller has applied its body
+    private volatile CacheState? _pendingState;
 
     // rate limit tracking (UTC ticks); read outside the lock by IsRateLimited
     private long _rateLimitedUntilTicks;
@@ -73,16 +76,21 @@ internal sealed class CdnFetcher
     }
 
     /// <summary>
-    /// Drops the cached ETag / Last-Modified so the next fetch is unconditional.
+    /// Promotes the validators staged by the last successful fetch.
     /// </summary>
     /// <remarks>
-    /// Call this when a fetched body could not be applied. The validators are stored as soon as a 2xx arrives,
-    /// before the caller has had a chance to reject the body, so leaving them in place would make the next fetch
-    /// revalidate to 304 ("what you have is current") for a config that was never actually loaded.
+    /// Call this only once the fetched body has been applied. Until then the previous validators stay in force, so
+    /// a body that is empty or fails to store is re-requested in full on the next fetch instead of being answered
+    /// with a 304 ("what you have is current") for a config that was never actually loaded.
     /// </remarks>
-    public void InvalidateCache()
+    public void Commit()
     {
-        _state = CacheState.Empty;
+        var pending = _pendingState;
+        if (pending is not null)
+        {
+            _state = pending;
+            _pendingState = null;
+        }
     }
 
     /// <summary>Returns <c>true</c> if a 429 Retry-After period is still active.</summary>
@@ -129,6 +137,7 @@ internal sealed class CdnFetcher
     private async Task<FetchResult> DoFetchAsync(CancellationToken cancellationToken)
     {
         var current = _state;
+        _pendingState = null;
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(_requestTimeout);
@@ -179,8 +188,7 @@ internal sealed class CdnFetcher
 
             if (statusCode >= 200 && statusCode < 300)
             {
-                // stale CDN node defense: reject 200 if Last-Modified isn't newer (CF nodes can serve old).
-                // missing Last-Modified: accept (no header = no check).
+                // stale CDN node defense: a 200 with no newer Last-Modified is a 304; missing header skips it
                 if (newLastModifiedAt is not null
                     && current.LastModifiedAt is not null
                     && newLastModifiedAt <= current.LastModifiedAt)
@@ -193,8 +201,8 @@ internal sealed class CdnFetcher
                     return new FetchResult(304, null, current.ETag?.ToString(), current.LastModifiedAt);
                 }
 
-                // store only what this response gave us; never mix tokens across requests
-                _state = new CacheState(newETag, newLastModifiedAt);
+                // stage only what this response gave us; never mix tokens across requests
+                _pendingState = new CacheState(newETag, newLastModifiedAt);
             }
 
             return new FetchResult(statusCode, body, newETag?.ToString(), newLastModifiedAt);

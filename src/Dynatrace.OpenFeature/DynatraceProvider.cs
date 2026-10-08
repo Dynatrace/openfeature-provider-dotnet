@@ -66,12 +66,10 @@ public sealed class DynatraceProvider : FeatureProvider
     private readonly TimeSpan _gracePeriod;
     private readonly ILogger? _logger;
 
-    // Guards state transitions. Each transition enqueues the event announcing it while holding the lock, so events
-    // keep the order in which the state changed.
+    // guards state transitions; events are enqueued under it so they keep state-change order
     private readonly object _stateLock = new object();
 
-    // Events wait here for the pump to hand them to the SDK. The SDK's own channel is bounded, so writing to it
-    // directly could block a state transition on a slow (or absent) consumer.
+    // unbounded outbox drained by the pump; the SDK channel is bounded and could block a transition
     private readonly Channel<ProviderEventPayload> _outbox = Channel.CreateUnbounded<ProviderEventPayload>(
         new UnboundedChannelOptions { SingleReader = true });
 
@@ -212,16 +210,12 @@ public sealed class DynatraceProvider : FeatureProvider
         catch (OperationCanceledException)
         {
             // The caller gave up; nothing to recover, so no polling.
-            _fetcher.InvalidateCache();
             throw;
         }
         catch (Exception e)
         {
-            // Don't rethrow yet: polling below recovers, and invalidating stops a phantom 304 from "recovering" to
-            // Ready with no flags loaded (the validators were cached when the 2xx arrived, before the body was
-            // rejected).
+            // rethrown after polling starts; uncommitted validators make the next poll a full fetch
             initFailure = e;
-            _fetcher.InvalidateCache();
             SetState(ProviderStatus.Error);
             _logger?.LogError(
                 e, "initialization failed; starting polling-only recovery at {PollInterval}", _pollInterval);
@@ -266,10 +260,11 @@ public sealed class DynatraceProvider : FeatureProvider
         }
         catch (Exception e) when (!(e is OperationCanceledException || e is ParseErrorException))
         {
-            // CDN content is untrusted input: the engine documents ParseErrorException, but schema validation
-            // can surface parser exceptions of its own. Either way it is a configuration problem.
+            // untrusted CDN content; schema validation can throw parser exceptions besides ParseErrorException
             throw new ParseErrorException($"initial CDN config is invalid: {e.Message}", e);
         }
+
+        _fetcher.Commit();
     }
 
     private void StartPolling()
@@ -282,6 +277,7 @@ public sealed class DynatraceProvider : FeatureProvider
         var pollingManager = new PollingManager(
             _fetcher.FetchAsync,
             StoreFlags,
+            _fetcher.Commit,
             OnConfigurationChanged,
             OnFetchSuccess,
             OnFetchFailure,
@@ -333,8 +329,6 @@ public sealed class DynatraceProvider : FeatureProvider
         }
         catch (Exception e) when (!(e is OperationCanceledException))
         {
-            // This body was rejected, so the validators cached for it must not stand in for it.
-            _fetcher.InvalidateCache();
             throw new ParseErrorException($"failed to store flag configuration: {e.Message}", e);
         }
     }

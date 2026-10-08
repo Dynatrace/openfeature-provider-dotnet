@@ -92,8 +92,7 @@ public class RetryStrategyTests
     [Fact]
     public async Task CapsAtTwoAttemptsWithOneBackoff()
     {
-        // KB 2.4: one retry, not a loop; the fetch must stay short enough that it cannot
-        // outlive the shortest poll interval (KB 2.1).
+        // KB 2.4: one retry, not a loop, so a fetch can't outlive the poll interval (KB 2.1)
         Assert.Equal(2, RetryStrategy.MaxAttempts);
         var attempts = 0;
 
