@@ -4,7 +4,8 @@ The official [Dynatrace](https://dynatrace.com) [OpenFeature](https://openfeatur
 
 The provider evaluates flags in-process: on initialization it fetches your flag configuration from the Dynatrace CDN and keeps it up to date in the background, so evaluations are local and do not make a network call.
 
-> **Status:** Early scaffolding — flag evaluation is not implemented yet and the provider is not ready for use.
+> **Status:** Early alpha — not yet ready for production use. The flag configuration is refreshed by polling
+> every 10 seconds; push-based change notifications (SSE) and evaluation metrics are not implemented yet.
 
 ## Installation
 
@@ -32,6 +33,25 @@ await Api.Instance.ShutdownAsync();
 Once the provider is registered, all flag evaluation goes through the OpenFeature API. See the
 [OpenFeature .NET SDK documentation](https://openfeature.dev/docs/reference/sdks/server/dotnet/)
 for evaluation contexts, hooks, events, and the rest of the SDK surface.
+
+## Configuration
+
+Pass a `DynatraceProviderOptions` as the second constructor argument:
+
+```csharp
+var options = new DynatraceProviderOptions
+{
+    ConfigOrigin = "https://cdn.eu.fm.dynatracelabs.com",
+    Logger = loggerFactory.CreateLogger("Dynatrace.OpenFeature"),
+};
+
+await Api.Instance.SetProviderAsync(new DynatraceProvider(sdkKey, options));
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `ConfigOrigin` | `string?` | derived from SDK key | Override the flag configuration origin (scheme, host and optional port; no path). |
+| `Logger` | `ILogger?` | none | Receives lifecycle messages and flag configuration schema warnings. |
 
 ## Contributing
 

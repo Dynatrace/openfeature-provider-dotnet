@@ -6,7 +6,7 @@
 
     <ItemGroup>
         <PackageVersion Include="OpenFeature" Version="2.14.1" />
-        <PackageVersion Include="OpenFeature.Providers.Flagd" Version="0.7.3" />
+        <PackageVersion Include="OpenFeature.Providers.Flagd.Core" Version="1.0.0" />
 
         <!-- test only -->
         <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

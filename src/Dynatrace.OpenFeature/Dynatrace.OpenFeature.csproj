@@ -21,8 +21,7 @@
 
     <ItemGroup>
         <PackageReference Include="OpenFeature" />
-        <!-- TODO: replace with the extracted flagd core package once it is available. -->
-        <PackageReference Include="OpenFeature.Providers.Flagd" />
+        <PackageReference Include="OpenFeature.Providers.Flagd.Core" />
     </ItemGroup>
 
     <ItemGroup>
