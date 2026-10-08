@@ -4,8 +4,8 @@ The official [Dynatrace](https://dynatrace.com) [OpenFeature](https://openfeatur
 
 The provider evaluates flags in-process: on initialization it fetches your flag configuration from the Dynatrace CDN and keeps it up to date in the background, so evaluations are local and do not make a network call.
 
-> **Status:** Early alpha — not yet ready for production use. The flag configuration is fetched once at
-> initialization and is not refreshed afterwards yet (no polling or change notifications).
+> **Status:** Early alpha — not yet ready for production use. The flag configuration is refreshed by polling
+> every 10 seconds; push-based change notifications (SSE) and evaluation metrics are not implemented yet.
 
 ## Installation
 

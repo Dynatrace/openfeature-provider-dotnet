@@ -66,6 +66,7 @@ public class CdnFetcherTests
 
         var fetcher = Fetcher();
         await fetcher.FetchAsync();
+        fetcher.Commit();
         await fetcher.FetchAsync();
 
         var second = _server.Requests[1];
@@ -101,7 +102,7 @@ public class CdnFetcherTests
     }
 
     [Fact]
-    public async Task InvalidateCache_MakesTheNextFetchUnconditional()
+    public async Task UncommittedFetch_LeavesTheNextFetchUnconditional()
     {
         _server.Enqueue(MockResponse.Status(200).Body(MinimalFlagsBody)
             .Header(HeaderETag, TestETag).Header(HeaderLastModified, LastModifiedOld));
@@ -109,12 +110,33 @@ public class CdnFetcherTests
 
         var fetcher = Fetcher();
         await fetcher.FetchAsync();
-        fetcher.InvalidateCache();
         await fetcher.FetchAsync();
 
+        // body never applied, so its validators must not be sent
         var second = _server.Requests[1];
         Assert.Null(second.GetHeader(HeaderIfNoneMatch));
         Assert.Null(second.GetHeader(HeaderIfModifiedSince));
+    }
+
+    [Fact]
+    public async Task UncommittedFetch_KeepsThePreviouslyCommittedValidators()
+    {
+        _server.Enqueue(MockResponse.Status(200).Body(MinimalFlagsBody)
+            .Header(HeaderETag, TestETag).Header(HeaderLastModified, LastModifiedOld));
+        _server.Enqueue(MockResponse.Status(200).Body(string.Empty)
+            .Header(HeaderETag, "\"rejected\"").Header(HeaderLastModified, LastModifiedNew));
+        _server.Enqueue(MockResponse.Status(304));
+
+        var fetcher = Fetcher();
+        await fetcher.FetchAsync();
+        fetcher.Commit();
+        await fetcher.FetchAsync();
+        await fetcher.FetchAsync();
+
+        // still revalidating against the last applied body
+        var third = _server.Requests[2];
+        Assert.Equal(TestETag, third.GetHeader(HeaderIfNoneMatch));
+        Assert.Equal(LastModifiedOld, third.GetHeader(HeaderIfModifiedSince));
     }
 
     [Fact]
@@ -194,8 +216,7 @@ public class CdnFetcherTests
     [Fact]
     public async Task TicksInsideTheRetryAfterWindow_AreSkippedWithoutNetworkCall()
     {
-        // KB 2.3: the 429 ends the fetch and opens a rate-limit window; ticks inside that
-        // window make no request, so they are skipped rather than reported as an outcome.
+        // KB 2.3: a 429 opens a rate-limit window; fetches inside it are skipped, not reported
         _server.Enqueue(MockResponse.Status(429).Header(HeaderRetryAfter, "60"));
 
         var fetcher = Fetcher();
@@ -273,6 +294,7 @@ public class CdnFetcherTests
 
         var fetcher = Fetcher();
         await fetcher.FetchAsync();
+        fetcher.Commit();
         var result = await fetcher.FetchAsync();
 
         Assert.True(result.IsNotModified);
@@ -289,6 +311,7 @@ public class CdnFetcherTests
 
         var fetcher = Fetcher();
         await fetcher.FetchAsync();
+        fetcher.Commit();
         var result = await fetcher.FetchAsync();
 
         Assert.True(result.IsNotModified);
@@ -313,8 +336,7 @@ public class CdnFetcherTests
     [Fact]
     public async Task ConcurrentFetch_IsSkippedNotReportedAs304()
     {
-        // KB 2.1.1: a contended fetch must be distinguishable from a successful revalidation.
-        // Reporting it as 304 makes it look like a successful poll and resets the grace timer.
+        // KB 2.1.1: a contended fetch must not look like a 304, which would reset the grace timer
         var firstInFlight = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _server.Dispatcher = async (_, _) =>

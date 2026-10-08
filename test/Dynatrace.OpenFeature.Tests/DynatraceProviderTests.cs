@@ -139,8 +139,7 @@ public class DynatraceProviderTests
     [Fact]
     public async Task Initialize_InitialFetchGivesUpAfterTheBoundedAttemptCount()
     {
-        // KB 2.4: the 2-attempt cap applies to the initial fetch too; a failing init gives up
-        // in seconds rather than retrying for half a minute.
+        // KB 2.4: the 2-attempt cap applies to the initial fetch too
         for (var i = 0; i < RetryStrategy.MaxAttempts; i++)
         {
             _server.Enqueue(MockResponse.Status(503));
@@ -166,8 +165,7 @@ public class DynatraceProviderTests
     [Fact]
     public async Task Initialize_InvalidInitialConfig_DoesNotLeaveValidatorsThatTurnTheNextFetchInto304()
     {
-        // The initial 200 carries a body flagd-core rejects. CdnFetcher caches that response's ETag anyway, so a
-        // later fetch would revalidate and get a 304: "what you have is current", though nothing was ever applied.
+        // rejected initial body; its ETag must not be sent, or the next fetch would 304
         const string badETag = "\"bad-config\"";
         _server.Dispatcher = (request, _) => Task.FromResult(
             request.GetHeader("If-None-Match") == badETag
