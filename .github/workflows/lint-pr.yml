@@ -1,0 +1,68 @@
+name: Lint PR
+
+on:
+    pull_request_target:
+        types:
+            - opened
+            - edited
+            - synchronize
+
+jobs:
+    lint-pr-title:
+        name: Validate PR title
+        runs-on: ubuntu-latest
+        permissions:
+            pull-requests: write
+        steps:
+            - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6
+              id: lint_pr_title
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - uses: marocchino/sticky-pull-request-comment@70d2764d1a7d5d9560b100cbea0077fc8f633987 # v3
+              if: always() && (steps.lint_pr_title.outputs.error_message != null)
+              with:
+                  header: pr-title-lint-error
+                  message: |
+                      Hey there and thank you for opening this pull request.
+
+                      We require pull request titles to follow the [Conventional Commits specification](https://www.conventionalcommits.org/en/v1.0.0/) and it looks like your proposed title needs to be adjusted.
+                      Details:
+
+                      ```
+                      ${{ steps.lint_pr_title.outputs.error_message }}
+                      ```
+
+            - if: ${{ steps.lint_pr_title.outputs.error_message == null }}
+              uses: marocchino/sticky-pull-request-comment@70d2764d1a7d5d9560b100cbea0077fc8f633987 # v3
+              with:
+                  header: pr-title-lint-error
+                  delete: true
+
+    # when a PR has a single commit, GitHub's default squash-merge behavior
+    # uses the raw commit message instead of the PR title, bypassing our
+    # PR title lint. this job catches that case.
+    # needed until resolved by the ASDY team: https://dynatrace.slack.com/archives/C044FDZRG0J/p1776431066203749
+    lint-single-commit:
+        name: Validate single-commit message
+        runs-on: ubuntu-latest
+        permissions:
+            pull-requests: read
+        steps:
+            - name: Get commit count
+              id: commit_count
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  count=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits --jq 'length')
+                  echo "count=$count" >> "$GITHUB_OUTPUT"
+
+            - name: Validate commit message
+              if: steps.commit_count.outputs.count == '1'
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits \
+                    --jq '.[0].commit.message | split("\n") | .[0]' \
+                  | grep -qE '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\(.+\))?(!)?: .+' \
+                  || { printf '::error::Single-commit PRs must have a conventional commit message, because GitHub uses the commit message (not the PR title) as the squash commit title. Please amend your commit message to follow the Conventional Commits specification: https://www.conventionalcommits.org\n'; exit 1; }

@@ -1,0 +1,22 @@
+# .NET
+bin/
+obj/
+/packages/
+TestResults/
+*.nupkg
+*.snupkg
+*.user
+.vs/
+
+# Rider / IntelliJ
+.idea/
+*.iml
+riderModule.iml
+/_ReSharper.Caches/
+
+# macOS
+.DS_Store
+
+# Local tooling
+.worktrees/
+.claude/settings.json

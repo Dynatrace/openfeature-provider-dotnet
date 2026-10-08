@@ -1,0 +1,72 @@
+name: Release
+
+on:
+    push:
+        branches:
+            - main
+
+concurrency:
+    group: release-${{ github.ref }}
+    cancel-in-progress: false
+
+permissions:
+    contents: read
+
+jobs:
+    release-please:
+        permissions:
+            contents: write
+            pull-requests: write
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+              id: release
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+
+        outputs:
+            release_created: ${{ steps.release.outputs.release_created }}
+            tag_name: ${{ steps.release.outputs.tag_name }}
+
+    publish:
+        runs-on: ubuntu-latest
+        needs: release-please
+        environment: publish
+        permissions:
+            # id-token: write # OIDC token for NuGet trusted publishing
+            contents: read
+        if: ${{ fromJSON(needs.release-please.outputs.release_created || false) }}
+
+        steps:
+            - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+              with:
+                  ref: ${{ needs.release-please.outputs.tag_name }}
+                  fetch-depth: 0
+
+            - name: Set up .NET
+              uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+              with:
+                  dotnet-version: 10.0.x
+
+            - name: Pack
+              run: dotnet pack src/Dynatrace.OpenFeature --configuration Release --output ./artifacts
+
+            # TODO: enable once NuGet account access and a trusted publishing policy exist
+            # - name: NuGet login
+            #   id: nuget-login
+            #   uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+            #   with:
+            #       user: <nuget.org account that owns the trusted publishing policy>
+            #
+            # - name: Push to NuGet
+            #   run: |
+            #       dotnet nuget push "./artifacts/*.nupkg" \
+            #         --source https://api.nuget.org/v3/index.json \
+            #         --api-key "$NUGET_API_KEY" \
+            #         --skip-duplicate
+            #   env:
+            #       NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+
+            - name: Push to NuGet (disabled)
+              run: echo "if we had nuget credentials, we would have published something :("
