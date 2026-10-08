@@ -10,7 +10,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-        <Version>0.1.0-alpha</Version> <!-- x-release-please-version -->
+        <Version>0.0.1-alpha</Version> <!-- x-release-please-version -->
         <Authors>Dynatrace</Authors>
         <Company>Dynatrace</Company>
         <Copyright>Copyright Dynatrace LLC</Copyright>

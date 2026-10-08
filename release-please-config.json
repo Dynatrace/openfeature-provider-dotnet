@@ -8,12 +8,8 @@
             "prerelease": true,
             "prerelease-type": "alpha",
             "extra-files": [
-                "README.md",
-                {
-                    "type": "xml",
-                    "path": "Directory.Build.props",
-                    "xpath": "//Project/PropertyGroup/Version"
-                }
+                "Directory.Build.props",
+                "README.md"
             ],
             "bump-minor-pre-major": true,
             "bump-patch-for-minor-pre-major": true
