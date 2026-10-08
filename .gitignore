@@ -20,6 +20,3 @@ riderModule.iml
 # Local tooling
 .worktrees/
 .claude/settings.json
-
-# Local NuGet feed for unpublished dependencies
-.local-packages/
