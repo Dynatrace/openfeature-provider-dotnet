@@ -8,7 +8,16 @@ namespace Dynatrace.OpenFeature;
 /// </summary>
 public sealed class DynatraceProviderOptions
 {
+    internal static readonly TimeSpan DefaultMetricsFlushInterval = TimeSpan.FromSeconds(30);
+
+    // distinct flag keys that trigger an out-of-band flush
+    internal const int DefaultMetricsSoftCapDistinctFlags = 1_000;
+
+    // distinct flag keys past which new flags are dropped
+    internal const int DefaultMetricsHardCapDistinctFlags = 2_000;
+
     private Uri? _configOriginUri;
+    private Uri? _metricsOriginUri;
 
     /// <summary>
     /// Overrides the flag configuration origin: scheme, host and optional port, with no path, query,
@@ -23,6 +32,21 @@ public sealed class DynatraceProviderOptions
     }
 
     /// <summary>
+    /// Overrides the evaluation metrics origin: scheme, host and optional port only (e.g.
+    /// <c>https://metrics.eu.fm.dynatracelabs.com</c>); <c>/v1/metrics</c> is appended. Derived from the SDK key when
+    /// <c>null</c>.
+    /// </summary>
+    /// <exception cref="ArgumentException">The value is blank or not a bare http(s) origin.</exception>
+    public string? MetricsOrigin
+    {
+        get => _metricsOriginUri?.GetLeftPart(UriPartial.Authority);
+        set => _metricsOriginUri = value is null ? null : ParseOrigin(value, nameof(MetricsOrigin));
+    }
+
+    /// <summary>How often evaluation metrics are sent. Defaults to 30 seconds; non-positive values fall back to it.</summary>
+    public TimeSpan MetricsFlushInterval { get; set; } = DefaultMetricsFlushInterval;
+
+    /// <summary>
     /// Logger for provider lifecycle messages and flag configuration schema warnings. When <c>null</c>,
     /// nothing is logged.
     /// </summary>
@@ -30,6 +54,9 @@ public sealed class DynatraceProviderOptions
 
     /// <summary>The validated, canonical config origin override, or <c>null</c> to derive it from the SDK key.</summary>
     internal Uri? ConfigOriginUri => _configOriginUri;
+
+    /// <summary>The validated, canonical metrics origin override, or <c>null</c> to derive it from the SDK key.</summary>
+    internal Uri? MetricsOriginUri => _metricsOriginUri;
 
     /// <summary>
     /// Validates <paramref name="value"/> as a bare origin and returns it in canonical form.

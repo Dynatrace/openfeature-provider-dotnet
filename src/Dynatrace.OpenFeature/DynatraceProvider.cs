@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Net.Http;
+using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -24,6 +26,10 @@ namespace Dynatrace.OpenFeature;
 /// configuration from the Dynatrace CDN and loads it into the engine, after which every evaluation is local and
 /// makes no network call. The configuration is then kept up to date by polling the CDN every 10 seconds (with ETag
 /// revalidation, so an unchanged configuration costs a 304).
+/// </para>
+/// <para>
+/// Evaluations are aggregated in memory by a provider hook and sent to the Dynatrace metrics endpoint in the
+/// background.
 /// </para>
 /// <para>
 /// A failed poll moves the provider to <c>Stale</c>; if the CDN stays unreachable for the one-minute grace period it
@@ -64,6 +70,9 @@ public sealed class DynatraceProvider : FeatureProvider
     private readonly CdnFetcher _fetcher;
     private readonly TimeSpan _pollInterval;
     private readonly TimeSpan _gracePeriod;
+    private readonly DynatraceMetricsAggregator _metricsAggregator;
+    private readonly EvaluationMetricsFlusher _metricsFlusher;
+    private readonly IImmutableList<Hook> _providerHooks;
     private readonly ILogger? _logger;
 
     // guards state transitions; events are enqueued under it so they keep state-change order
@@ -102,7 +111,10 @@ public sealed class DynatraceProvider : FeatureProvider
             sdkKey,
             options,
             flagdCore,
-            new CdnFetcher(BuildCdnUrl(sdkKey, options), httpClient, options?.Logger))
+            new CdnFetcher(BuildCdnUrl(sdkKey, options), httpClient, options?.Logger),
+            httpClient,
+            PollIntervalSseDisconnected,
+            GracePeriod)
     {
     }
 
@@ -121,7 +133,21 @@ public sealed class DynatraceProvider : FeatureProvider
         CdnFetcher fetcher,
         TimeSpan pollInterval,
         TimeSpan gracePeriod)
+        : this(sdkKey, options, flagdCore, fetcher, SharedHttpClient, pollInterval, gracePeriod)
     {
+    }
+
+    // tests only: as above, plus the metrics HTTP stack
+    internal DynatraceProvider(
+        string sdkKey,
+        DynatraceProviderOptions? options,
+        FlagdCore flagdCore,
+        CdnFetcher fetcher,
+        HttpClient metricsHttpClient,
+        TimeSpan pollInterval,
+        TimeSpan gracePeriod)
+    {
+        var trimmedSdkKey = ValidateSdkKey(sdkKey).Value;
         var safeOptions = options ?? new DynatraceProviderOptions();
 
         _cdnUrl = BuildCdnUrl(sdkKey, safeOptions);
@@ -130,6 +156,19 @@ public sealed class DynatraceProvider : FeatureProvider
         _fetcher = fetcher;
         _pollInterval = pollInterval;
         _gracePeriod = gracePeriod;
+        _metricsAggregator = new DynatraceMetricsAggregator(logger: _logger);
+        _metricsFlusher = new EvaluationMetricsFlusher(
+            _metricsAggregator,
+            metricsHttpClient,
+            trimmedSdkKey,
+            BuildMetricsUrl(sdkKey, safeOptions),
+            ResolveMetricsFlushInterval(safeOptions.MetricsFlushInterval, _logger),
+            DynatraceProviderOptions.DefaultMetricsSoftCapDistinctFlags,
+            ResolveSdkVersion(),
+            ProviderName,
+            _logger);
+        _providerHooks = ImmutableList.Create<Hook>(
+            new DynatraceMetricsHook(_metricsAggregator, () => DateTimeOffset.UtcNow, _metricsFlusher.OnRecord, _logger));
     }
 
     /// <summary>The provider's own view of its lifecycle state, which it announces to the SDK as events.</summary>
@@ -151,6 +190,45 @@ public sealed class DynatraceProvider : FeatureProvider
             : overrideOrigin.GetLeftPart(UriPartial.Authority);
 
         return new Uri($"{origin}/{type}/{trimmed}.json");
+    }
+
+    /// <summary>The metrics origin override plus <c>/v1/metrics</c>, else the endpoint for the key's geo.</summary>
+    internal static Uri BuildMetricsUrl(string? sdkKey, DynatraceProviderOptions? options)
+    {
+        var overrideOrigin = options?.MetricsOriginUri;
+        if (overrideOrigin is not null)
+        {
+            return new Uri($"{overrideOrigin.GetLeftPart(UriPartial.Authority)}/v1/metrics");
+        }
+
+        var geo = ValidateSdkKey(sdkKey).Groups["geo"].Value;
+        return new Uri($"https://metrics.{geo}.fm.dynatrace.com/v1/metrics");
+    }
+
+    internal static TimeSpan ResolveMetricsFlushInterval(TimeSpan interval, ILogger? logger)
+    {
+        if (interval <= TimeSpan.Zero || interval.TotalMilliseconds < 1)
+        {
+            logger?.LogWarning("MetricsFlushInterval is invalid, using default value");
+            return DynatraceProviderOptions.DefaultMetricsFlushInterval;
+        }
+
+        return interval;
+    }
+
+    /// <summary>The package version, without any source-revision suffix.</summary>
+    private static string ResolveSdkVersion()
+    {
+        var assembly = typeof(DynatraceProvider).Assembly;
+        var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                      ?? assembly.GetName().Version?.ToString();
+        if (version is null || string.IsNullOrWhiteSpace(version))
+        {
+            return "0.0.0";
+        }
+
+        var plus = version.IndexOf('+');
+        return plus >= 0 ? version.Substring(0, plus) : version;
     }
 
     private static Match ValidateSdkKey(string? sdkKey)
@@ -177,6 +255,9 @@ public sealed class DynatraceProvider : FeatureProvider
 
     /// <inheritdoc />
     public override Metadata GetMetadata() => ProviderMetadata;
+
+    /// <inheritdoc />
+    public override IImmutableList<Hook> GetProviderHooks() => _providerHooks;
 
     /// <summary>
     /// Fetches the initial flag configuration from the CDN, loads it into the evaluation engine and starts
@@ -223,6 +304,7 @@ public sealed class DynatraceProvider : FeatureProvider
 
         // Started only now, after the initial fetch has completed. Reached on the failure path too.
         StartPolling();
+        _metricsFlusher.Start();
 
         if (initFailure is not null)
         {
@@ -257,6 +339,7 @@ public sealed class DynatraceProvider : FeatureProvider
         try
         {
             _flagdCore.SetConfigurations(body);
+            UpdateMetricsVersionFromFlagSet();
         }
         catch (Exception e) when (!(e is OperationCanceledException || e is ParseErrorException))
         {
@@ -290,17 +373,26 @@ public sealed class DynatraceProvider : FeatureProvider
     /// <summary>
     /// Shuts the provider down: stops polling, cancels the grace timer and any in-flight fetch. Idempotent.
     /// </summary>
-    public override Task ShutdownAsync(CancellationToken cancellationToken = default)
+    public override async Task ShutdownAsync(CancellationToken cancellationToken = default)
     {
         if (Interlocked.Exchange(ref _shutdown, 1) == 1)
         {
-            return Task.CompletedTask;
+            return;
         }
 
         _logger?.LogInformation("shutting down Dynatrace provider");
 
         _pollingManager?.Stop();
         _shutdownCts.Cancel();
+
+        try
+        {
+            await _metricsFlusher.ShutdownAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception e) when (!(e is OperationCanceledException))
+        {
+            _logger?.LogWarning(e, "metrics flusher shutdown failed");
+        }
 
         // Taken so that a callback already past its shutdown check cannot move the state after we reset it.
         lock (_stateLock)
@@ -310,7 +402,6 @@ public sealed class DynatraceProvider : FeatureProvider
         }
 
         _logger?.LogInformation("Dynatrace provider shut down");
-        return Task.CompletedTask;
     }
 
     // -- poll callbacks --
@@ -323,13 +414,27 @@ public sealed class DynatraceProvider : FeatureProvider
             throw new InvalidOperationException("StoreFlags called after provider shutdown; ignoring new config");
         }
 
+        // seal the outgoing version's evaluations before switching
+        _metricsFlusher.EnqueueSealedBatch(_metricsAggregator.Drain());
+        _metricsFlusher.TriggerFlush();
+
         try
         {
-            return _flagdCore.SetConfigurations(json);
+            var changed = _flagdCore.SetConfigurations(json);
+            UpdateMetricsVersionFromFlagSet();
+            return changed;
         }
         catch (Exception e) when (!(e is OperationCanceledException))
         {
             throw new ParseErrorException($"failed to store flag configuration: {e.Message}", e);
+        }
+    }
+
+    private void UpdateMetricsVersionFromFlagSet()
+    {
+        if (_flagdCore.GetFlagSetMetadata().TryGetValue("version", out var version) && version is string versionText)
+        {
+            _metricsAggregator.SetVersion(versionText);
         }
     }
 

@@ -453,8 +453,13 @@ public class DynatraceProviderPollingSdkTests : IAsyncLifetime
     private const string Domain = "dynatrace-polling-tests";
 
     private readonly MockHttpServer _server = new MockHttpServer();
+    private readonly MockHttpServer _metricsServer = new MockHttpServer();
 
-    public Task InitializeAsync() => Task.CompletedTask;
+    public Task InitializeAsync()
+    {
+        _metricsServer.Dispatcher = (_, _) => Task.FromResult(MockResponse.Status(202));
+        return Task.CompletedTask;
+    }
 
     public Task DisposeAsync() => Api.Instance.ShutdownAsync();
 
@@ -488,7 +493,7 @@ public class DynatraceProviderPollingSdkTests : IAsyncLifetime
             _server.CreateClient(),
             new RetryStrategy(new Random(42), (_, _) => Task.CompletedTask));
         var provider = new DynatraceProvider(
-            TestFixtures.SdkKey, null, new FlagdCore(), fetcher, TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(30));
+            TestFixtures.SdkKey, null, new FlagdCore(), fetcher, _metricsServer.CreateClient(), TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(30));
         await Api.Instance.SetProviderAsync(Domain, provider);
         Api.Instance.AddHandler(ProviderEventTypes.ProviderReady, _ => ready.CountDown());
         var client = Api.Instance.GetClient(Domain);

@@ -383,8 +383,13 @@ public class DynatraceProviderSdkTests : IAsyncLifetime
     private const string Domain = "dynatrace-tests";
 
     private readonly MockHttpServer _server = new MockHttpServer();
+    private readonly MockHttpServer _metricsServer = new MockHttpServer();
 
-    public Task InitializeAsync() => Task.CompletedTask;
+    public Task InitializeAsync()
+    {
+        _metricsServer.Dispatcher = (_, _) => Task.FromResult(MockResponse.Status(202));
+        return Task.CompletedTask;
+    }
 
     public Task DisposeAsync() => Api.Instance.ShutdownAsync();
 
@@ -395,7 +400,10 @@ public class DynatraceProviderSdkTests : IAsyncLifetime
         new CdnFetcher(
             DynatraceProvider.BuildCdnUrl(TestFixtures.SdkKey, null),
             _server.CreateClient(),
-            new RetryStrategy(new Random(42), (_, _) => Task.CompletedTask)));
+            new RetryStrategy(new Random(42), (_, _) => Task.CompletedTask)),
+        _metricsServer.CreateClient(),
+        DynatraceProvider.PollIntervalSseDisconnected,
+        DynatraceProvider.GracePeriod);
 
     [Fact]
     public async Task Client_EvaluatesFlagsFromCdnConfig()
