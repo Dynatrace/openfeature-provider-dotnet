@@ -14,43 +14,21 @@ using Microsoft.Extensions.Logging;
 namespace Dynatrace.OpenFeature;
 
 /// <summary>
-/// Scheduled flusher that drains the <see cref="DynatraceMetricsAggregator"/>, serializes the documented Dynatrace
-/// evaluation metrics payload, and POSTs it to the configured metrics ingest endpoint.
+/// Drains the aggregator and POSTs it to the metrics endpoint: periodically, at capacity (<see cref="OnRecord"/>), on
+/// version rotation (<see cref="TriggerFlush"/>) and on shutdown. One flush at a time, off the evaluation path.
 /// </summary>
-/// <remarks>
-/// <para>
-/// Server-SDK flush triggers (per the evaluation-metrics scoping doc):
-/// </para>
-/// <list type="bullet">
-/// <item><description>periodic: fixed-delay scheduling</description></item>
-/// <item><description><see cref="OnRecord"/>: capacity, called by the hook after each evaluation</description></item>
-/// <item><description>
-/// <see cref="TriggerFlush"/>: version rotation, called when a new config is stored, after sealing the current batch
-/// via <see cref="EnqueueSealedBatch"/>
-/// </description></item>
-/// <item><description><see cref="ShutdownAsync"/>: performs a final flush</description></item>
-/// </list>
-/// <para>
-/// All HTTP work happens on background tasks, one flush at a time, never on the evaluation path.
-/// </para>
-/// </remarks>
 internal sealed class EvaluationMetricsFlusher
 {
     internal static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(10);
 
-    /// <summary>
-    /// Cooldown applied to out-of-band flushes after a failed delivery, to avoid hammering a struggling endpoint
-    /// between periodic flush ticks.
-    /// </summary>
+    // suppresses capacity flushes after a failed delivery
     internal static readonly TimeSpan FailedCapacityRetryCooldown = TimeSpan.FromSeconds(30);
 
-    /// <summary>Maximum number of sealed batches held in the queue at any time.</summary>
     internal const int MaxSealedBatches = 10;
 
     private const string SdkType = "server";
 
-    // Relaxed escaping: the body is JSON on the wire, not embedded in HTML, so there is no reason to \uXXXX-escape
-    // characters such as '+' or '<' in flag keys.
+    // not embedded in HTML, so no need to escape '+' or '<' in flag keys
     private static readonly JsonSerializerOptions PayloadSerializerOptions = new JsonSerializerOptions
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -67,7 +45,7 @@ internal sealed class EvaluationMetricsFlusher
     private readonly string _providerName;
     private readonly ILogger? _logger;
 
-    // Serialises flushes: periodic, out-of-band, rotation and the final one run one at a time.
+    // one flush at a time, whatever triggered it
     private readonly SemaphoreSlim _flushGate = new SemaphoreSlim(1, 1);
     private readonly CancellationTokenSource _stopped = new CancellationTokenSource();
 
@@ -77,8 +55,7 @@ internal sealed class EvaluationMetricsFlusher
     private int _sealedBatchCount;
     private long _nextOutOfBandFlushAllowedTimestamp;
 
-    // Pre-drained batches sealed by version-rotation calls to EnqueueSealedBatch, flushed before the live aggregator
-    // on every flush cycle to preserve per-version batch ordering. A failed batch is requeued at the front.
+    // sealed on version rotation; sent before the live map, failures requeued at the front
     private readonly LinkedList<DynatraceMetricsAggregator.DrainedBatch> _sealedBatches =
         new LinkedList<DynatraceMetricsAggregator.DrainedBatch>();
 
@@ -104,7 +81,7 @@ internal sealed class EvaluationMetricsFlusher
         _logger = logger;
     }
 
-    /// <summary>Starts periodic flushing. Idempotent; safe to call once per provider lifecycle.</summary>
+    /// <summary>Starts periodic flushing. Idempotent.</summary>
     public void Start()
     {
         if (Interlocked.Exchange(ref _started, 1) == 1)
@@ -117,11 +94,7 @@ internal sealed class EvaluationMetricsFlusher
             "evaluation metrics flusher started (interval={Interval}, url={MetricsUri})", _flushInterval, _metricsUri);
     }
 
-    /// <summary>
-    /// Accepts a pre-drained batch for delivery ahead of the next periodic tick. The batch is appended to the
-    /// sealed-batch queue and will be delivered before any live-aggregator data on the next flush cycle, preserving
-    /// per-version ordering. No-op for empty batches.
-    /// </summary>
+    /// <summary>Queues a drained batch to send before the live map; empty batches are ignored.</summary>
     public void EnqueueSealedBatch(DynatraceMetricsAggregator.DrainedBatch? batch)
     {
         if (batch is null || batch.IsEmpty)
@@ -145,15 +118,7 @@ internal sealed class EvaluationMetricsFlusher
         }
     }
 
-    /// <summary>
-    /// Schedules a flush on a background task without blocking the caller. Safe to call before <see cref="Start"/>.
-    /// </summary>
-    /// <remarks>
-    /// Unlike <see cref="OnRecord"/>, this does not coalesce with an in-flight flush: each call queues a fresh one.
-    /// This is intentional: callers (config rotation, shutdown-style code paths) need the guarantee that their
-    /// just-enqueued sealed batch will be picked up promptly even if another flush is still completing. The extra flush
-    /// is cheap when there is nothing to deliver.
-    /// </remarks>
+    /// <summary>Schedules a flush without blocking; not coalesced, so a just-sealed batch is always picked up.</summary>
     public void TriggerFlush()
     {
         if (Volatile.Read(ref _shutdown) == 1)
@@ -164,10 +129,7 @@ internal sealed class EvaluationMetricsFlusher
         _ = Task.Run(FlushQuietlyAsync);
     }
 
-    /// <summary>
-    /// Capacity callback invoked by the hook after each evaluation. If the live aggregate map has crossed the capacity
-    /// threshold, schedules an out-of-band flush. Never blocks the calling thread.
-    /// </summary>
+    /// <summary>Called after each evaluation; schedules a flush once the live map reaches the capacity threshold.</summary>
     public void OnRecord()
     {
         if (Volatile.Read(ref _started) == 0 || Volatile.Read(ref _shutdown) == 1)
@@ -220,7 +182,7 @@ internal sealed class EvaluationMetricsFlusher
         {
             while (!_stopped.IsCancellationRequested)
             {
-                // Fixed delay: the next tick is measured from the end of the previous flush.
+                // fixed delay: measured from the end of the previous flush
                 await Task.Delay(_flushInterval, _stopped.Token).ConfigureAwait(false);
                 await FlushQuietlyAsync().ConfigureAwait(false);
             }
@@ -270,9 +232,7 @@ internal sealed class EvaluationMetricsFlusher
 
     private async Task FlushAsync()
     {
-        // Flush sealed version-rotation batches first to preserve per-version ordering. try/finally so an unexpected
-        // throw from FlushBatchAsync can't drop the batch on the floor: we always either deliver or requeue at the
-        // front of the queue.
+        // sealed batches first, in version order; finally guarantees deliver-or-requeue
         DynatraceMetricsAggregator.DrainedBatch? sealedBatch;
         while ((sealedBatch = PollFirstSealedBatch()) is not null)
         {
@@ -299,8 +259,7 @@ internal sealed class EvaluationMetricsFlusher
             }
         }
 
-        // Then flush whatever has accumulated in the live aggregator. Same try/finally pattern: if FlushBatchAsync
-        // throws after Drain(), we must requeue the snapshot so counts aren't lost.
+        // then the live map; requeued if delivery fails or throws
         var live = _aggregator.Drain();
         if (live.IsEmpty)
         {
@@ -345,11 +304,7 @@ internal sealed class EvaluationMetricsFlusher
         }
     }
 
-    /// <summary>
-    /// Attempts to POST <paramref name="batch"/> to the ingestion endpoint. Returns <c>true</c> if delivered
-    /// successfully (or dropped as non-retryable); <c>false</c> if the caller should requeue the batch for the next
-    /// flush cycle.
-    /// </summary>
+    /// <summary>POSTs the batch; <c>false</c> means requeue, <c>true</c> means delivered or dropped as non-retryable.</summary>
     private async Task<bool> FlushBatchAsync(DynatraceMetricsAggregator.DrainedBatch batch)
     {
         var body = BuildPayload(batch);
@@ -426,9 +381,7 @@ internal sealed class EvaluationMetricsFlusher
         return JsonSerializer.Serialize(payload, PayloadSerializerOptions);
     }
 
-    /// <summary>
-    /// The documented evaluation metrics payload. Property order is the order on the wire; names are camelCase.
-    /// </summary>
+    // property order is the order on the wire
     internal sealed class EvaluationMetricsPayload
     {
         public string? Version { get; set; }

@@ -168,8 +168,7 @@ public class DynatraceMetricsHookTests
     [Fact]
     public async Task PassesTheVersionFromFlagMetadataToTheAggregator()
     {
-        // the version is set eagerly by the provider before any evaluation arrives; the hook passes the one in the
-        // metadata through to Record() so the aggregator can validate it
+        // the provider sets the version first; the hook passes the metadata one through for validation
         var aggregator = VersionedAggregator();
         var hook = new DynatraceMetricsHook(aggregator, Clock823);
         var metadata = new ImmutableMetadata(new Dictionary<string, object> { ["version"] = "1741780800" });

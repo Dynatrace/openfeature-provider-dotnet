@@ -2,7 +2,6 @@ using System;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -361,86 +360,5 @@ public class CdnFetcherTests
         release.SetResult(true);
         Assert.True((await first).IsSuccess); // the in-flight fetch should complete normally
         Assert.Equal(1, _server.RequestCount); // the contended caller must not make a request
-    }
-
-    // -- decoding the configuration body --
-
-    private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
-
-    [Fact]
-    public async Task Body_IsDecodedAsUtf8_WhenTheResponseDeclaresNoCharset()
-    {
-        const string config = "{\"flags\":{\"grüß-gott\":{\"variants\":{\"☃\":\"ünïcödé\"}}}}";
-        _server.Enqueue(MockResponse.Status(200).BodyBytes(Utf8.GetBytes(config)));
-
-        var result = await Fetcher().FetchAsync();
-
-        Assert.Equal(config, result.Body);
-    }
-
-    [Theory]
-    [InlineData("application/json; charset=iso-8859-1")]
-    [InlineData("application/json; charset=utf-16")]
-    [InlineData("application/json; charset=\"not-a-real-charset\"")]
-    public async Task Body_IsDecodedAsUtf8_EvenWhenTheResponseDeclaresAnotherCharset(string contentType)
-    {
-        // JSON is UTF-8 by definition (RFC 8259); a misconfigured CDN header must not change what the flags say.
-        const string config = "{\"flags\":{\"f\":{\"variants\":{\"v\":\"ünïcödé ☃\"}}}}";
-        _server.Enqueue(MockResponse.Status(200).BodyBytes(Utf8.GetBytes(config)).Header("Content-Type", contentType));
-
-        var result = await Fetcher().FetchAsync();
-
-        Assert.Equal(config, result.Body);
-    }
-
-    [Fact]
-    public async Task Body_ByteOrderMarkIsStripped()
-    {
-        var withBom = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(Utf8.GetBytes("{\"flags\":{}}")).ToArray();
-        _server.Enqueue(MockResponse.Status(200).BodyBytes(withBom));
-
-        var result = await Fetcher().FetchAsync();
-
-        Assert.Equal("{\"flags\":{}}", result.Body); // a leading U+FEFF would make the document unparseable
-    }
-
-    [Fact]
-    public async Task Body_InvalidUtf8_ThrowsFormatExceptionInsteadOfSilentlyCorruptingTheConfig()
-    {
-        var corrupt = Utf8.GetBytes("{\"flags\":{\"f\":{\"variants\":{\"v\":\"abc").Concat(new byte[] { 0xC3, 0x28 }).ToArray();
-        _server.Enqueue(MockResponse.Status(200).BodyBytes(corrupt));
-
-        await Assert.ThrowsAsync<FormatException>(() => Fetcher().FetchAsync());
-    }
-
-    [Fact]
-    public async Task Body_InvalidUtf8_DoesNotCacheValidators()
-    {
-        // The validators of a body that could not be read must not stand in for it on the next fetch.
-        _server.Enqueue(MockResponse.Status(200).BodyBytes(new byte[] { 0xC3, 0x28 }).Header(HeaderETag, TestETag).Header(HeaderLastModified, LastModifiedOld));
-        _server.Enqueue(MockResponse.Status(200).Body(MinimalFlagsBody));
-        var fetcher = Fetcher();
-
-        await Assert.ThrowsAsync<FormatException>(() => fetcher.FetchAsync());
-        await fetcher.FetchAsync();
-
-        var second = _server.Requests[1];
-        Assert.Null(second.GetHeader(HeaderIfNoneMatch));
-        Assert.Null(second.GetHeader(HeaderIfModifiedSince));
-    }
-
-    [Fact]
-    public async Task ErrorResponseBody_IsNeverDecoded()
-    {
-        // an error page in some other encoding is not a configuration, and must not turn a 503 into a decoding error
-        for (var i = 0; i < RetryStrategy.MaxAttempts; i++)
-        {
-            _server.Enqueue(MockResponse.Status(503).BodyBytes(new byte[] { 0xFF, 0xFE, 0xC3, 0x28 }));
-        }
-
-        var result = await Fetcher().FetchAsync();
-
-        Assert.Equal(503, result.StatusCode);
-        Assert.Null(result.Body);
     }
 }

@@ -8,19 +8,12 @@ namespace Dynatrace.OpenFeature;
 /// </summary>
 public sealed class DynatraceProviderOptions
 {
-    /// <summary>Default periodic flush interval for the metrics hook.</summary>
     internal static readonly TimeSpan DefaultMetricsFlushInterval = TimeSpan.FromSeconds(30);
 
-    /// <summary>
-    /// Default capacity threshold (distinct flag keys in the live aggregate map) at which the metrics hook triggers an
-    /// out-of-band flush.
-    /// </summary>
+    // distinct flag keys that trigger an out-of-band flush
     internal const int DefaultMetricsSoftCapDistinctFlags = 1_000;
 
-    /// <summary>
-    /// Default hard cap for the aggregate map. Once the live map holds this many distinct flag keys, evaluations of
-    /// further new flags are dropped (existing flags keep accumulating).
-    /// </summary>
+    // distinct flag keys past which new flags are dropped
     internal const int DefaultMetricsHardCapDistinctFlags = 2_000;
 
     private Uri? _configOriginUri;
@@ -39,9 +32,9 @@ public sealed class DynatraceProviderOptions
     }
 
     /// <summary>
-    /// Overrides the evaluation metrics origin: scheme, host and optional port, with no path, query, fragment or user
-    /// info (e.g. <c>https://metrics.eu.fm.dynatracelabs.com</c>). The provider appends <c>/v1/metrics</c>. For
-    /// dev/labs environments; the production origin is derived from the SDK key when this is <c>null</c>.
+    /// Overrides the evaluation metrics origin: scheme, host and optional port only (e.g.
+    /// <c>https://metrics.eu.fm.dynatracelabs.com</c>); <c>/v1/metrics</c> is appended. Derived from the SDK key when
+    /// <c>null</c>.
     /// </summary>
     /// <exception cref="ArgumentException">The value is blank or not a bare http(s) origin.</exception>
     public string? MetricsOrigin
@@ -50,10 +43,7 @@ public sealed class DynatraceProviderOptions
         set => _metricsOriginUri = value is null ? null : ParseOrigin(value, nameof(MetricsOrigin));
     }
 
-    /// <summary>
-    /// Periodic flush interval for the evaluation metrics hook. Defaults to 30 seconds; a zero or negative value is
-    /// ignored (with a warning) in favour of the default.
-    /// </summary>
+    /// <summary>How often evaluation metrics are sent. Defaults to 30 seconds; non-positive values fall back to it.</summary>
     public TimeSpan MetricsFlushInterval { get; set; } = DefaultMetricsFlushInterval;
 
     /// <summary>

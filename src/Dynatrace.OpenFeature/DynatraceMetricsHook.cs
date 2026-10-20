@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -9,25 +12,7 @@ using OpenFeature.Model;
 
 namespace Dynatrace.OpenFeature;
 
-/// <summary>
-/// Provider-owned hook that captures every flag evaluation into the Dynatrace evaluation metrics aggregate map.
-/// </summary>
-/// <remarks>
-/// See the evaluation-metrics technical scoping doc for the dimensions and bucketing rules implemented here:
-/// <list type="bullet">
-/// <item><description>per-record dimensions: <c>flagKey</c>, <c>variant</c>, <c>reason</c>, <c>errorCode</c></description></item>
-/// <item><description>10-second epoch bucket</description></item>
-/// <item><description>
-/// <c>__default__</c> sentinel applied for code-default and error evaluations, or when the resolver does not return
-/// a variant
-/// </description></item>
-/// <item><description>error codes and reasons normalized to lowercase to match the line protocol</description></item>
-/// <item><description>
-/// config <c>version</c> read from the per-evaluation <c>version</c> metadata and checked against the aggregator's
-/// batch-level version
-/// </description></item>
-/// </list>
-/// </remarks>
+/// <summary>Records every evaluation into the metrics aggregator, normalized per the evaluation-metrics spec.</summary>
 internal sealed class DynatraceMetricsHook : Hook
 {
     internal const string DefaultVariant = "__default__";
@@ -36,21 +21,13 @@ internal sealed class DynatraceMetricsHook : Hook
     internal const string ErrorReason = "error";
     internal const string VersionMetadataKey = "version";
 
-    /// <summary>
-    /// The error code names of the line protocol. Spelled out rather than derived from the enum names, so renaming an
-    /// enum member can never silently change what is sent on the wire.
-    /// </summary>
-    private static readonly Dictionary<ErrorType, string> ErrorCodeNames = new Dictionary<ErrorType, string>
-    {
-        [ErrorType.ProviderNotReady] = "provider_not_ready",
-        [ErrorType.FlagNotFound] = "flag_not_found",
-        [ErrorType.ParseError] = "parse_error",
-        [ErrorType.TypeMismatch] = "type_mismatch",
-        [ErrorType.TargetingKeyMissing] = "targeting_key_missing",
-        [ErrorType.InvalidContext] = "invalid_context",
-        [ErrorType.General] = "general",
-        [ErrorType.ProviderFatal] = "provider_fatal",
-    };
+    // the SDK's spec codes (e.g. FLAG_NOT_FOUND); its GetDescription helper is internal
+    private static readonly Dictionary<ErrorType, string> ErrorCodeNames = Enum.GetValues(typeof(ErrorType))
+        .Cast<ErrorType>()
+        .ToDictionary(
+            e => e,
+            e => (typeof(ErrorType).GetField(e.ToString())?.GetCustomAttribute<DescriptionAttribute>()?.Description
+                  ?? e.ToString()).ToLowerInvariant());
 
     private readonly DynatraceMetricsAggregator _aggregator;
     private readonly Func<DateTimeOffset> _clock;
@@ -101,7 +78,7 @@ internal sealed class DynatraceMetricsHook : Hook
         }
         catch (Exception e)
         {
-            // Never block the evaluation path on flush bookkeeping.
+            // never block the evaluation path
             _logger?.LogWarning(e, "metrics hook onRecord callback failed");
         }
 

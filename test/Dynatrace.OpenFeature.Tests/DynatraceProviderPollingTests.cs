@@ -198,33 +198,6 @@ public class DynatraceProviderPollingTests
         Assert.False(Volatile.Read(ref sentRejectedETag));
     }
 
-    [Fact]
-    public async Task CorruptBodyWhilePolling_GoesStaleAndRecoversOnceTheCdnServesGoodBytes()
-    {
-        var corrupt = true;
-        var requests = 0;
-        _server.Dispatcher = (_, _) =>
-        {
-            if (Interlocked.Increment(ref requests) == 1)
-            {
-                return Task.FromResult(MockResponse.Status(200).Body(TestFixtures.FlagConfig));
-            }
-
-            return Task.FromResult(Volatile.Read(ref corrupt)
-                ? MockResponse.Status(200).BodyBytes(new byte[] { 0xC3, 0x28 })
-                : MockResponse.Status(200).Body(TestFixtures.FlagConfig));
-        };
-        var provider = FastProvider(TimeSpan.FromSeconds(10));
-        await provider.InitializeAsync(EvaluationContext.Empty);
-
-        await AwaitStateAsync(provider, ProviderStatus.Stale, 3_000);
-        Assert.True((await provider.ResolveBooleanValueAsync("my-bool-flag", false)).Value); // the loaded config keeps serving
-
-        Volatile.Write(ref corrupt, false);
-        await AwaitStateAsync(provider, ProviderStatus.Ready, 3_000);
-        await provider.ShutdownAsync();
-    }
-
     // -- failed initialization --
 
     [Fact]

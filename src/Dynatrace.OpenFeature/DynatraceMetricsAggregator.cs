@@ -5,17 +5,9 @@ using Microsoft.Extensions.Logging;
 
 namespace Dynatrace.OpenFeature;
 
-/// <summary>
-/// In-memory aggregate map backing the Dynatrace evaluation metrics hook.
-/// </summary>
-/// <remarks>
-/// Implements the two-level structure <c>map[flagKey][variant, reason, errorCode, timestampSec]</c>. Drains are
-/// synchronized with writes so evaluations cannot be written into a snapshot after it has been serialized.
-/// </remarks>
+/// <summary>Two-level aggregate map: <c>map[flagKey][variant, reason, errorCode, timestampSec]</c>.</summary>
 internal sealed class DynatraceMetricsAggregator
 {
-    internal const int DefaultMaxDistinctFlags = 10_000;
-
     private readonly object _lock = new object();
     private readonly int _maxDistinctFlags;
     private readonly ILogger? _logger;
@@ -25,12 +17,8 @@ internal sealed class DynatraceMetricsAggregator
 
     private string? _version;
 
-    public DynatraceMetricsAggregator(ILogger? logger = null)
-        : this(DefaultMaxDistinctFlags, logger)
-    {
-    }
-
-    public DynatraceMetricsAggregator(int maxDistinctFlags, ILogger? logger = null)
+    public DynatraceMetricsAggregator(
+        int maxDistinctFlags = DynatraceProviderOptions.DefaultMetricsHardCapDistinctFlags, ILogger? logger = null)
     {
         if (maxDistinctFlags <= 0)
         {
@@ -65,11 +53,7 @@ internal sealed class DynatraceMetricsAggregator
         }
     }
 
-    /// <summary>
-    /// Records one evaluation. Dropped when no config version has been observed yet, when
-    /// <paramref name="evaluationVersion"/> is set and differs from the current version, or when the flag is new and
-    /// the map already holds the maximum number of distinct flags.
-    /// </summary>
+    /// <summary>Records one evaluation; dropped with no version, a version mismatch, or a new flag over the cap.</summary>
     public void Record(
         string flagKey, string variant, string reason, string? errorCode, long timestampSec, string? evaluationVersion = null)
     {
@@ -123,10 +107,7 @@ internal sealed class DynatraceMetricsAggregator
         }
     }
 
-    /// <summary>
-    /// Drains the live aggregate map and returns the previous contents for the caller to flush. The version is
-    /// preserved because it remains valid for the just-drained batch.
-    /// </summary>
+    /// <summary>Swaps out the live map and returns it with its version.</summary>
     public DrainedBatch Drain()
     {
         lock (_lock)
@@ -149,9 +130,7 @@ internal sealed class DynatraceMetricsAggregator
         }
     }
 
-    /// <summary>
-    /// The contents of the aggregate map at the moment it was drained, together with the config version they belong to.
-    /// </summary>
+    /// <summary>A drained map and the config version it was recorded under.</summary>
     internal sealed class DrainedBatch
     {
         private readonly Dictionary<string, Dictionary<EvaluationMetricKey, EvaluationMetricAggregation>> _evaluations;

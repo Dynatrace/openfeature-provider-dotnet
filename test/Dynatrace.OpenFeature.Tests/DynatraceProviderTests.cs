@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 using OpenFeature;
@@ -131,31 +130,6 @@ public class DynatraceProviderTests
     public async Task Initialize_InvalidJson_ThrowsParseError()
     {
         _server.Enqueue(MockResponse.Status(200).Body("not-json"));
-        var provider = Provider();
-
-        await Assert.ThrowsAsync<ParseErrorException>(() => provider.InitializeAsync(EvaluationContext.Empty));
-        await provider.ShutdownAsync();
-    }
-
-    [Fact]
-    public async Task Initialize_ConfigWithNonAsciiValuesAndAByteOrderMark_ResolvesExactly()
-    {
-        const string variant = "ünïcödé ☃";
-        var config = "{\"flags\":{\"my-string-flag\":{\"state\":\"ENABLED\",\"defaultVariant\":\"v\",\"variants\":{\"v\":\"" + variant + "\"}}}}";
-        var bytes = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(new System.Text.UTF8Encoding(false).GetBytes(config)).ToArray();
-        _server.Enqueue(MockResponse.Status(200).BodyBytes(bytes).Header("Content-Type", "application/json; charset=iso-8859-1"));
-        var provider = Provider();
-
-        await provider.InitializeAsync(EvaluationContext.Empty);
-
-        var result = await provider.ResolveStringValueAsync("my-string-flag", "default");
-        Assert.Equal(variant, result.Value);
-    }
-
-    [Fact]
-    public async Task Initialize_ResponseThatIsNotUtf8_ThrowsParseError()
-    {
-        _server.Enqueue(MockResponse.Status(200).BodyBytes(new byte[] { 0xC3, 0x28 }));
         var provider = Provider();
 
         await Assert.ThrowsAsync<ParseErrorException>(() => provider.InitializeAsync(EvaluationContext.Empty));

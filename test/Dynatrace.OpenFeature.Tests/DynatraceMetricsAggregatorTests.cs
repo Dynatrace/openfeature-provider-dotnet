@@ -107,8 +107,7 @@ public class DynatraceMetricsAggregatorTests
         aggregator.SetVersion("v1");
         aggregator.Drain();
 
-        // map is empty but version is still v1: a mismatch must still be rejected; version transitions are the
-        // provider's responsibility via SetVersion()
+        // still rejected on an empty map; only SetVersion() changes the version
         aggregator.Record("flag-a", "on", "static", null, 1741780820, "v2");
 
         Assert.Equal(0, aggregator.Size);
@@ -145,7 +144,7 @@ public class DynatraceMetricsAggregatorTests
         aggregator.Record("flag", "a|b", "c", null, 1741780820);
         aggregator.Record("flag", "a", "b|c", null, 1741780820);
 
-        // Both land in distinct slots: a string-concatenated key would collide on the pipe character.
+        // distinct slots; a concatenated key would collide on '|'
         Assert.Equal(2, aggregator.Snapshot()["flag"].Count);
     }
 

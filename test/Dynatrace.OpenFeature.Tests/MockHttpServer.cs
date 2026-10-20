@@ -126,7 +126,7 @@ internal sealed class RecordedRequest
 
     public static async Task<RecordedRequest> CreateAsync(HttpRequestMessage request)
     {
-        // Captured now: the content is disposed once the request completes.
+        // captured now; the content is disposed after the request
         var headers = request.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value), StringComparer.OrdinalIgnoreCase);
         var body = string.Empty;
         if (request.Content is not null)
@@ -150,7 +150,6 @@ internal sealed class MockResponse
     private readonly List<KeyValuePair<string, string>> _headers = new List<KeyValuePair<string, string>>();
     private HttpStatusCode _status = HttpStatusCode.OK;
     private string _body = string.Empty;
-    private byte[]? _bodyBytes;
     private Exception? _failure;
 
     public static MockResponse Status(int status) => new MockResponse { _status = (HttpStatusCode)status };
@@ -161,13 +160,6 @@ internal sealed class MockResponse
     public MockResponse Body(string body)
     {
         _body = body;
-        return this;
-    }
-
-    /// <summary>A raw body, sent without a Content-Type unless one is added with <see cref="Header"/>.</summary>
-    public MockResponse BodyBytes(byte[] body)
-    {
-        _bodyBytes = body;
         return this;
     }
 
@@ -184,10 +176,7 @@ internal sealed class MockResponse
             throw _failure;
         }
 
-        var message = new HttpResponseMessage(_status)
-        {
-            Content = _bodyBytes is not null ? new ByteArrayContent(_bodyBytes) : new StringContent(_body),
-        };
+        var message = new HttpResponseMessage(_status) { Content = new StringContent(_body) };
         foreach (var header in _headers)
         {
             // entity headers (e.g. Last-Modified) live on the content

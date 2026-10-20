@@ -79,7 +79,7 @@ public class EvaluationMetricsFlusherTests
     {
         _metricsServer.Enqueue(MockResponse.Status(202));
         var aggregator = VersionedAggregator();
-        const string flagKey = "weird \"key\" with \\ slashes, <tags>, + and ünïcödé ☃";
+        const string flagKey = "weird \"key\" with \\ slashes, <tags>, + and \u00fcn\u00efc\u00f6d\u00e9 \u2603";
         aggregator.Record(flagKey, "v", "static", null, 1741780820L);
 
         await Flusher(aggregator).ShutdownAsync();
@@ -159,7 +159,7 @@ public class EvaluationMetricsFlusherTests
     public async Task DropsRecordsWhenNoVersionIsAvailable()
     {
         var aggregator = new DynatraceMetricsAggregator();
-        // no version set: Record() must silently drop the evaluation
+        // no version set: dropped
         aggregator.Record("header-redesign", "control", "targeting_match", null, 1741780820L);
 
         await Flusher(aggregator).ShutdownAsync();
@@ -180,7 +180,7 @@ public class EvaluationMetricsFlusherTests
 
         flusher.OnRecord();
 
-        // By the time the server has received the request, Drain() has definitely run and emptied the live map.
+        // the request arrived, so Drain() has run
         var failed = await _metricsServer.TakeRequestAsync(Wait);
         Assert.Equal("/v1/metrics", failed!.Path);
         Assert.Equal(0, aggregator.Size); // a failed batch must not be merged back into the live aggregator
@@ -250,7 +250,7 @@ public class EvaluationMetricsFlusherTests
     [Fact]
     public async Task ServerError_StopsTheCycleAndKeepsOrdering()
     {
-        // A failed sealed batch must be retried before anything newer is sent.
+        // a failed sealed batch retries before anything newer
         _metricsServer.Enqueue(MockResponse.Status(503));
         _metricsServer.Enqueue(MockResponse.Status(202));
         _metricsServer.Enqueue(MockResponse.Status(202));
@@ -275,10 +275,9 @@ public class EvaluationMetricsFlusherTests
     [Fact]
     public async Task Flush_RequeuesTheBatchWhenTheHttpClientThrowsAnUnexpectedException()
     {
-        // A misbehaving HttpClient throwing something other than the documented exceptions. Without the requeue the
-        // drained batch would be silently lost.
-        var healthy = false;
-        _metricsServer.Dispatcher = (_, _) => Volatile.Read(ref healthy)
+        // an undocumented exception must still requeue the drained batch
+        var calls = 0;
+        _metricsServer.Dispatcher = (_, _) => Interlocked.Increment(ref calls) > 1
             ? Task.FromResult(MockResponse.Status(202))
             : throw new InvalidOperationException("boom");
         var aggregator = VersionedAggregator();
@@ -290,7 +289,6 @@ public class EvaluationMetricsFlusherTests
         Assert.NotNull(attempt);
         Assert.Equal(0, aggregator.Size); // the versioned failed batch is preserved outside the live aggregator
 
-        Volatile.Write(ref healthy, true);
         flusher.TriggerFlush();
         var retry = await _metricsServer.TakeRequestAsync(Wait);
         Assert.NotNull(retry);

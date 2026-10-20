@@ -2,10 +2,7 @@ using System;
 
 namespace Dynatrace.OpenFeature;
 
-/// <summary>
-/// Identifies one bucket of aggregated evaluations for a single flag: the (variant, reason, errorCode, 10s timestamp
-/// bucket) tuple. A typed key rather than a concatenated string, so values that contain a delimiter cannot collide.
-/// </summary>
+/// <summary>The (variant, reason, errorCode, timestampSec) bucket of one flag; typed so delimiters can't collide.</summary>
 internal readonly struct EvaluationMetricKey : IEquatable<EvaluationMetricKey>
 {
     public EvaluationMetricKey(string variant, string reason, string? errorCode, long timestampSec)

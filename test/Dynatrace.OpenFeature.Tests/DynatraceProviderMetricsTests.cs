@@ -135,7 +135,7 @@ public class DynatraceProviderMetricsTests
     [Fact]
     public async Task StoreFlags_SealsTheBatchForTheCurrentVersionBeforeSwitching()
     {
-        // Both POSTs are delivered by the shutdown flush: sealed v1 batch first, live v2 batch second.
+        // shutdown sends sealed v1 first, then live v2
         _metricsServer.Enqueue(MockResponse.Status(202));
         _metricsServer.Enqueue(MockResponse.Status(202));
         _cdnServer.Enqueue(MockResponse.Status(200).Body(TestFixtures.FlagConfig));
@@ -147,14 +147,13 @@ public class DynatraceProviderMetricsTests
         await Evaluate(hook, StaticDetails("1741780800"));
         await Evaluate(hook, StaticDetails("1741780800"));
 
-        // The CDN poller detects a new config, sealing the v1 batch and scheduling an async flush. StoreFlags must
-        // return immediately without blocking.
+        // new config: seals v1 and schedules a flush without blocking
         provider.StoreFlags(TestFixtures.FlagConfig.Replace("1741780800", "1741780900"));
 
         // one evaluation against config v2 goes to the fresh live batch
         await Evaluate(hook, StaticDetails("1741780900"));
 
-        // Shutdown delivers the sealed v1 batch first, then the live v2 batch.
+        // sealed v1 first, then live v2
         await provider.ShutdownAsync();
 
         var v1 = await _metricsServer.TakeRequestAsync(Wait);
@@ -185,7 +184,6 @@ public class DynatraceProviderMetricsTests
         Assert.Null(await _metricsServer.TakeRequestAsync(TimeSpan.FromMilliseconds(200)));
     }
 
-    // -- metrics URL and options --
 
     [Fact]
     public void BuildMetricsUrl_DerivesFromTheKey()

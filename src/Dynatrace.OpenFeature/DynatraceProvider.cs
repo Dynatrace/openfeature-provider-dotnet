@@ -28,9 +28,8 @@ namespace Dynatrace.OpenFeature;
 /// revalidation, so an unchanged configuration costs a 304).
 /// </para>
 /// <para>
-/// Every evaluation is also recorded by a provider-owned hook and aggregated in memory; the aggregate is periodically
-/// (every 30 seconds by default), at capacity, on a configuration change and on shutdown POSTed to the Dynatrace
-/// metrics endpoint, off the evaluation path.
+/// Evaluations are aggregated in memory by a provider hook and sent to the Dynatrace metrics endpoint in the
+/// background.
 /// </para>
 /// <para>
 /// A failed poll moves the provider to <c>Stale</c>; if the CDN stays unreachable for the one-minute grace period it
@@ -138,7 +137,7 @@ public sealed class DynatraceProvider : FeatureProvider
     {
     }
 
-    // tests only: as above, plus the HTTP stack the metrics are delivered through
+    // tests only: as above, plus the metrics HTTP stack
     internal DynatraceProvider(
         string sdkKey,
         DynatraceProviderOptions? options,
@@ -157,8 +156,7 @@ public sealed class DynatraceProvider : FeatureProvider
         _fetcher = fetcher;
         _pollInterval = pollInterval;
         _gracePeriod = gracePeriod;
-        _metricsAggregator = new DynatraceMetricsAggregator(
-            DynatraceProviderOptions.DefaultMetricsHardCapDistinctFlags, _logger);
+        _metricsAggregator = new DynatraceMetricsAggregator(logger: _logger);
         _metricsFlusher = new EvaluationMetricsFlusher(
             _metricsAggregator,
             metricsHttpClient,
@@ -194,10 +192,7 @@ public sealed class DynatraceProvider : FeatureProvider
         return new Uri($"{origin}/{type}/{trimmed}.json");
     }
 
-    /// <summary>
-    /// Builds the metrics ingest URL: the metrics origin override (plus <c>/v1/metrics</c>) when set, otherwise the
-    /// production endpoint derived from the key's geo.
-    /// </summary>
+    /// <summary>The metrics origin override plus <c>/v1/metrics</c>, else the endpoint for the key's geo.</summary>
     internal static Uri BuildMetricsUrl(string? sdkKey, DynatraceProviderOptions? options)
     {
         var overrideOrigin = options?.MetricsOriginUri;
@@ -221,7 +216,7 @@ public sealed class DynatraceProvider : FeatureProvider
         return interval;
     }
 
-    /// <summary>The package version reported to the metrics endpoint, without any source-revision suffix.</summary>
+    /// <summary>The package version, without any source-revision suffix.</summary>
     private static string ResolveSdkVersion()
     {
         var assembly = typeof(DynatraceProvider).Assembly;
@@ -280,9 +275,7 @@ public sealed class DynatraceProvider : FeatureProvider
     /// The initial fetch failed at the network level, or the CDN answered with a non-success status.
     /// </exception>
     /// <exception cref="TimeoutException">The initial fetch timed out.</exception>
-    /// <exception cref="ParseErrorException">
-    /// The response body was empty, is not valid UTF-8, or is not a valid flag configuration.
-    /// </exception>
+    /// <exception cref="ParseErrorException">The response body was empty or is not a valid flag configuration.</exception>
     /// <exception cref="InvalidOperationException">The fetch was skipped, so no request was made.</exception>
     public override async Task InitializeAsync(EvaluationContext context, CancellationToken cancellationToken = default)
     {
@@ -326,16 +319,7 @@ public sealed class DynatraceProvider : FeatureProvider
         // Loads the config JSON schemas, so that the initial config and every polled one is validated.
         await _flagdCore.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
-        FetchResult result;
-        try
-        {
-            result = await _fetcher.FetchAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (FormatException e)
-        {
-            throw new ParseErrorException($"initial CDN response is not a valid configuration: {e.Message}", e);
-        }
-
+        var result = await _fetcher.FetchAsync(cancellationToken).ConfigureAwait(false);
         if (result.IsSkipped)
         {
             throw new InvalidOperationException("initial CDN fetch was skipped; no request was made");
@@ -430,8 +414,7 @@ public sealed class DynatraceProvider : FeatureProvider
             throw new InvalidOperationException("StoreFlags called after provider shutdown; ignoring new config");
         }
 
-        // Seal what was recorded under the outgoing config version and hand it to the flusher before switching, so
-        // those evaluations are delivered under that version rather than the next one.
+        // seal the outgoing version's evaluations before switching
         _metricsFlusher.EnqueueSealedBatch(_metricsAggregator.Drain());
         _metricsFlusher.TriggerFlush();
 
