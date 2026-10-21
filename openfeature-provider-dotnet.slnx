@@ -20,6 +20,7 @@
     <Project Path="src/Dynatrace.OpenFeature/Dynatrace.OpenFeature.csproj" />
   </Folder>
   <Folder Name="/test/">
+    <Project Path="test/Dynatrace.OpenFeature.E2e/Dynatrace.OpenFeature.E2e.csproj" />
     <Project Path="test/Dynatrace.OpenFeature.Tests/Dynatrace.OpenFeature.Tests.csproj" />
   </Folder>
 </Solution>

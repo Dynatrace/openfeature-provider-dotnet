@@ -16,10 +16,20 @@ dotnet build
 ## Testing
 
 ```bash
-dotnet test
+dotnet test test/Dynatrace.OpenFeature.Tests
 ```
 
 Unit tests must not require network access.
+
+The e2e suite runs the shared [fm-provider-test-harness](https://github.com/Dynatrace/fm-provider-test-harness) gherkin
+spec against the provider. It needs the submodule and a running Docker daemon (the mock server runs in a container):
+
+```bash
+git submodule update --init
+dotnet test test/Dynatrace.OpenFeature.E2e
+```
+
+Set `MOCKSERVER_IMAGE` to run against a locally built mock server image.
 
 ## Code style
 

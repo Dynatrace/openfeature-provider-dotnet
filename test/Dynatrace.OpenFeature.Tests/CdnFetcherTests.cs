@@ -74,6 +74,22 @@ public class CdnFetcherTests
         Assert.Equal(LastModifiedOld, second.GetHeader(HeaderIfModifiedSince));
     }
 
+    [Theory]
+    [InlineData("v1")] // unquoted, which the typed ETag header would drop
+    [InlineData("W/\"v1\"")]
+    public async Task SecondFetch_EchoesTheETagVerbatim(string eTag)
+    {
+        _server.Enqueue(MockResponse.Status(200).Body(MinimalFlagsBody).Header(HeaderETag, eTag));
+        _server.Enqueue(MockResponse.Status(304));
+
+        var fetcher = Fetcher();
+        await fetcher.FetchAsync();
+        fetcher.Commit();
+        await fetcher.FetchAsync();
+
+        Assert.Equal(eTag, _server.Requests[1].GetHeader(HeaderIfNoneMatch));
+    }
+
     [Fact]
     public async Task NotModifiedResponse_ReturnsNullBody()
     {
