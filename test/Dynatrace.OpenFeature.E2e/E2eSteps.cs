@@ -133,7 +133,7 @@ public sealed class E2eSteps
     [StepDefinition(@"^an initialized, READY provider serving the ""([^""]*)"" flag configuration$")]
     public Task AnInitializedReadyProvider(string flags) => ArrangeReadyProviderAsync(new CdnResponse(200, LoadFlags(flags)));
 
-    [StepDefinition(@"^an initialized, READY provider serving the ""([^""]*)"" flag configuration with ""([^""]*)"" header ""([^""]*)""$")]
+    [StepDefinition(@"^an initialized, READY provider serving the ""([^""]*)"" flag configuration with ""([^""]*)"" header ""(.*)""$")]
     public Task AnInitializedReadyProviderWithHeader(string flags, string header, string value)
         => ArrangeReadyProviderAsync(new CdnResponse(200, LoadFlags(flags)).WithHeader(header, value));
 
@@ -160,7 +160,7 @@ public sealed class E2eSteps
     public Task TheCdnRespondsWithStatusAndBody(int status, string body) => SetCdnResponsesAsync(
         body == "null" ? new CdnResponse(status) : new CdnResponse(status, body.Substring(1, body.Length - 2)));
 
-    [StepDefinition(@"^the CDN responds with status (\d+) and the ""([^""]*)"" flag configuration with ""([^""]*)"" header ""([^""]*)""$")]
+    [StepDefinition(@"^the CDN responds with status (\d+) and the ""([^""]*)"" flag configuration with ""([^""]*)"" header ""(.*)""$")]
     public Task TheCdnRespondsWithStatusAndFlagsWithHeader(int status, string flags, string header, string value)
         => SetCdnResponsesAsync(new CdnResponse(status, LoadFlags(flags)).WithHeader(header, value));
 
@@ -224,7 +224,7 @@ public sealed class E2eSteps
     public async Task TheInitialCdnRequestHasNoHeader(string header)
         => Assert.False((await NthCdnRequestAsync(1)).HasHeader(header), $"initial request unexpectedly carried {header}");
 
-    [StepDefinition(@"^the (\d+)\. CDN request has the ""([^""]*)"" header ""([^""]*)""$")]
+    [StepDefinition(@"^the (\d+)\. CDN request has the ""([^""]*)"" header ""(.*)""$")]
     public async Task TheCdnRequestHasTheHeader(int index, string header, string value)
         => Assert.Equal(value, (await NthCdnRequestAsync(index)).GetHeader(header));
 

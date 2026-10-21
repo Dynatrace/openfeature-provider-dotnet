@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
@@ -149,8 +148,7 @@ internal sealed class CdnFetcher
             using var request = new HttpRequestMessage(HttpMethod.Get, _url);
             if (current.ETag is not null)
             {
-                // echoed verbatim, as the other providers do; the typed header rejects unquoted tags
-                request.Headers.TryAddWithoutValidation("If-None-Match", current.ETag);
+                request.Headers.IfNoneMatch.Add(current.ETag);
             }
 
             if (current.LastModifiedAt is not null)
@@ -173,7 +171,7 @@ internal sealed class CdnFetcher
 
             if (statusCode == 304)
             {
-                return new FetchResult(304, null, current.ETag, current.LastModifiedAt);
+                return new FetchResult(304, null, current.ETag?.ToString(), current.LastModifiedAt);
             }
 
             if (statusCode == 429)
@@ -184,7 +182,7 @@ internal sealed class CdnFetcher
                 return new FetchResult(429, null, null, null);
             }
 
-            var newETag = response.Headers.TryGetValues("ETag", out var eTags) ? eTags.FirstOrDefault() : null;
+            var newETag = response.Headers.ETag;
             var newLastModifiedAt = response.Content.Headers.LastModified;
             var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 
@@ -200,14 +198,14 @@ internal sealed class CdnFetcher
                         + "treating as 304 (suspected stale node)",
                         newLastModifiedAt,
                         current.LastModifiedAt);
-                    return new FetchResult(304, null, current.ETag, current.LastModifiedAt);
+                    return new FetchResult(304, null, current.ETag?.ToString(), current.LastModifiedAt);
                 }
 
                 // stage only what this response gave us; never mix tokens across requests
                 _pendingState = new CacheState(newETag, newLastModifiedAt);
             }
 
-            return new FetchResult(statusCode, body, newETag, newLastModifiedAt);
+            return new FetchResult(statusCode, body, newETag?.ToString(), newLastModifiedAt);
         }
     }
 
@@ -235,13 +233,13 @@ internal sealed class CdnFetcher
     {
         internal static readonly CacheState Empty = new CacheState(null, null);
 
-        internal CacheState(string? eTag, DateTimeOffset? lastModifiedAt)
+        internal CacheState(EntityTagHeaderValue? eTag, DateTimeOffset? lastModifiedAt)
         {
             ETag = eTag;
             LastModifiedAt = lastModifiedAt;
         }
 
-        internal string? ETag { get; }
+        internal EntityTagHeaderValue? ETag { get; }
 
         internal DateTimeOffset? LastModifiedAt { get; }
     }
