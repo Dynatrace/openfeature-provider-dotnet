@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <IsPackable>false</IsPackable>
+        <IsTestProject>true</IsTestProject>
+        <ReqnrollUseIntermediateOutputPathForCodeBehind>true</ReqnrollUseIntermediateOutputPathForCodeBehind>
+        <RunSettingsFilePath>$(MSBuildProjectDirectory)/e2e.runsettings</RunSettingsFilePath>
+        <!-- print each scenario and its steps as it finishes, not just the summary -->
+        <VSTestLogger>console%3Bverbosity=detailed</VSTestLogger>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.NET.Test.Sdk" />
+        <PackageReference Include="Reqnroll.xUnit" />
+        <PackageReference Include="Testcontainers" />
+        <PackageReference Include="xunit" />
+        <PackageReference Include="xunit.runner.visualstudio" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="../../src/Dynatrace.OpenFeature/Dynatrace.OpenFeature.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ReqnrollFeatureFiles Include="../../fm-provider-test-harness/gherkin/*.feature" Link="Features/%(Filename)%(Extension)" />
+        <None Include="../../fm-provider-test-harness/flags/*.json" Link="flags/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="../../fm-provider-test-harness/version.txt" Link="version.txt" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+</Project>

@@ -20,6 +20,8 @@ jobs:
 
         steps:
             - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+              with:
+                  submodules: true
 
             - name: Set up .NET
               uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -38,7 +40,24 @@ jobs:
               run: dotnet build --configuration Release --no-restore
 
             - name: Test
-              run: dotnet test --configuration Release --no-build
+              run: dotnet test test/Dynatrace.OpenFeature.Tests --configuration Release --no-build
 
             - name: Pack
               run: dotnet pack src/Dynatrace.OpenFeature --configuration Release --no-build --output ./artifacts
+
+    e2e:
+        name: E2E Tests
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+              with:
+                  submodules: true
+
+            - name: Set up .NET
+              uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+              with:
+                  dotnet-version: 10.0.x
+
+            - name: Run E2E tests
+              run: dotnet test test/Dynatrace.OpenFeature.E2e --configuration Release
