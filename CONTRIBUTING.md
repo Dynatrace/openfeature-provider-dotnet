@@ -12,7 +12,7 @@ The library itself targets `netstandard2.0`.
 ```bash
 dotnet build
 ```
-
+`dotnet build` builds the whole solution, including the e2e project, so initialize the submodule first (see Prerequisites).
 ## Testing
 
 ```bash
