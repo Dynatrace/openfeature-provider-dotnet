@@ -70,7 +70,7 @@ public sealed class E2eSteps
     private static readonly TimeSpan MetricsFlushInterval = TimeSpan.FromHours(1);
 
     // how often WaitForAsync re-checks its condition
-    private static readonly TimeSpan WaitPollStep = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan WaitCheckInterval = TimeSpan.FromMilliseconds(100);
 
     // how often AssertHoldsForAsync re-checks its condition
     private static readonly TimeSpan HoldCheckInterval = TimeSpan.FromMilliseconds(50);
