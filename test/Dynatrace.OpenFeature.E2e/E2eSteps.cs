@@ -216,7 +216,7 @@ public sealed class E2eSteps
     public async Task TheProviderStateIs(string state)
     {
         var want = ParseStatus(state);
-        await PollUntilAsync(StateTimeout, () => Task.FromResult(_client.ProviderStatus == want));
+        await WaitUntilAsync(StateTimeout, () => Task.FromResult(_client.ProviderStatus == want));
         Assert.Equal(want, _client.ProviderStatus);
     }
 
