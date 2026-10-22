@@ -411,7 +411,7 @@ public sealed class E2eSteps
         return await condition();
     }
 
-    private static async Task WaitForAsync(TimeSpan timeout, Func<Task<bool>> condition)
+    private static async Task AssertEventuallyAsync(TimeSpan timeout, Func<Task<bool>> condition)
         => Assert.True(await PollUntilAsync(timeout, condition), $"condition not met within {timeout.TotalSeconds}s");
 
     private static async Task AssertHoldsForAsync(TimeSpan duration, Func<Task<bool>> condition, string message)
