@@ -4,7 +4,9 @@
 
 - .NET SDK 10.0 (the solution uses the `.slnx` format, which needs SDK 9.0.200 or later)
 - .NET 8.0 SDK/runtime as well, since the tests multi-target `net8.0` and `net10.0`
-
+- The `fm-provider-test-harness` git submodule, which the e2e project needs to build:
+  clone with `--recurse-submodules`, or run `git submodule update --init` afterwards
+  
 The library itself targets `netstandard2.0`.
 
 ## Building
