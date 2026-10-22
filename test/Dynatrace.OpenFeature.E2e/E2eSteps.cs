@@ -69,7 +69,7 @@ public sealed class E2eSteps
     // no periodic metrics flush during a scenario
     private static readonly TimeSpan MetricsFlushInterval = TimeSpan.FromHours(1);
 
-    // how often WaitForAsync re-checks its condition
+    // how often WaitUntilAsync re-checks its condition
     private static readonly TimeSpan WaitCheckInterval = TimeSpan.FromMilliseconds(100);
 
     // how often AssertHoldsForAsync re-checks its condition
@@ -179,7 +179,7 @@ public sealed class E2eSteps
     public async Task PollingTriggersAConfigurationRefetch()
     {
         var baseline = await _mockServer.CountCdnRequestsAsync();
-        await WaitForAsync(PollTimeout, async () => await _mockServer.CountCdnRequestsAsync() > baseline);
+        await AssertEventuallyAsync(PollTimeout, async () => await _mockServer.CountCdnRequestsAsync() > baseline);
     }
 
     // baseline is taken before sleeping, so the next assertion counts what these intervals produced
@@ -234,7 +234,7 @@ public sealed class E2eSteps
     {
         if (count > 0)
         {
-            await WaitForAsync(CountTimeout, async () => await CountFurtherRequestsAsync() >= count);
+            await AssertEventuallyAsync(CountTimeout, async () => await CountFurtherRequestsAsync() >= count);
         }
 
         await AssertHoldsForAsync(CountSettle, async () => await CountFurtherRequestsAsync() == count,
@@ -260,7 +260,7 @@ public sealed class E2eSteps
     {
         var anchor = _pollingStartedAtMs;
         long? firstTick = null;
-        await WaitForAsync(FirstTickTimeout, async () => (firstTick = await FirstRequestAfterAsync(anchor)) is not null);
+        await AssertEventuallyAsync(FirstTickTimeout, async () => (firstTick = await FirstRequestAfterAsync(anchor)) is not null);
         AssertCadence(firstTick!.Value - anchor, "gap between initialization completing and the first poll tick");
     }
 
@@ -270,7 +270,7 @@ public sealed class E2eSteps
 
     [StepDefinition(@"^flag ""([^""]*)"" eventually evaluates to (\w+)$")]
     public Task FlagEventuallyEvaluatesTo(string flag, string expected)
-        => WaitForAsync(RetryTimeout, () => IsFlagValueAsync(flag, bool.Parse(expected)));
+        => AssertEventuallyAsync(RetryTimeout, () => IsFlagValueAsync(flag, bool.Parse(expected)));
 
     [StepDefinition(@"^flag ""([^""]*)"" continues to evaluate to (\w+)$")]
     public async Task FlagContinuesToEvaluateTo(string flag, string expected)
@@ -395,7 +395,7 @@ public sealed class E2eSteps
 
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-    private static async Task<bool> PollUntilAsync(TimeSpan timeout, Func<Task<bool>> condition)
+    private static async Task<bool> WaitUntilAsync(TimeSpan timeout, Func<Task<bool>> condition)
     {
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
@@ -405,14 +405,14 @@ public sealed class E2eSteps
                 return true;
             }
 
-            await Task.Delay(WaitPollStep);
+            await Task.Delay(WaitCheckInterval);
         }
 
         return await condition();
     }
 
     private static async Task AssertEventuallyAsync(TimeSpan timeout, Func<Task<bool>> condition)
-        => Assert.True(await PollUntilAsync(timeout, condition), $"condition not met within {timeout.TotalSeconds}s");
+        => Assert.True(await WaitUntilAsync(timeout, condition), $"condition not met within {timeout.TotalSeconds}s");
 
     private static async Task AssertHoldsForAsync(TimeSpan duration, Func<Task<bool>> condition, string message)
     {
@@ -420,7 +420,7 @@ public sealed class E2eSteps
         while (DateTime.UtcNow < deadline)
         {
             Assert.True(await condition(), message);
-            await Task.Delay(HoldCheckStep);
+            await Task.Delay(HoldCheckInterval);
         }
 
         Assert.True(await condition(), message);
