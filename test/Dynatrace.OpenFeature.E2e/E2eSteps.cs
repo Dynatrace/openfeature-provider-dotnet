@@ -133,9 +133,9 @@ public sealed class E2eSteps
     [StepDefinition(@"^an initialized, READY provider serving the ""([^""]*)"" flag configuration$")]
     public Task AnInitializedReadyProvider(string flags) => ArrangeReadyProviderAsync(new CdnResponse(200, LoadFlags(flags)));
 
-    [StepDefinition(@"^an initialized, READY provider serving the ""([^""]*)"" flag configuration with ""([^""]*)"" header ""(.*)""$")]
+    [StepDefinition(@"^an initialized, READY provider serving the ""([^""]*)"" flag configuration with ""([^""]*)"" header (""[^""]*""|'[^']*')$")]
     public Task AnInitializedReadyProviderWithHeader(string flags, string header, string value)
-        => ArrangeReadyProviderAsync(new CdnResponse(200, LoadFlags(flags)).WithHeader(header, value));
+        => ArrangeReadyProviderAsync(new CdnResponse(200, LoadFlags(flags)).WithHeader(header, Unquote(value)));
 
     [StepDefinition("the CDN responds slower than the request timeout")]
     public Task TheCdnRespondsSlowerThanTheRequestTimeout() => DelayCdnResponsesAsync(SlowResponseDelay);
@@ -158,11 +158,11 @@ public sealed class E2eSteps
     // unquoted null is an absent body, as opposed to the empty-string body ""
     [StepDefinition(@"^the CDN responds with status (\d+) and body (""[^""]*""|null)$")]
     public Task TheCdnRespondsWithStatusAndBody(int status, string body) => SetCdnResponsesAsync(
-        body == "null" ? new CdnResponse(status) : new CdnResponse(status, body.Substring(1, body.Length - 2)));
+        body == "null" ? new CdnResponse(status) : new CdnResponse(status, Unquote(body)));
 
-    [StepDefinition(@"^the CDN responds with status (\d+) and the ""([^""]*)"" flag configuration with ""([^""]*)"" header ""(.*)""$")]
+    [StepDefinition(@"^the CDN responds with status (\d+) and the ""([^""]*)"" flag configuration with ""([^""]*)"" header (""[^""]*""|'[^']*')$")]
     public Task TheCdnRespondsWithStatusAndFlagsWithHeader(int status, string flags, string header, string value)
-        => SetCdnResponsesAsync(new CdnResponse(status, LoadFlags(flags)).WithHeader(header, value));
+        => SetCdnResponsesAsync(new CdnResponse(status, LoadFlags(flags)).WithHeader(header, Unquote(value)));
 
     [StepDefinition(@"^the CDN responds (\d+) then (\d+) with the ""([^""]*)"" configuration$")]
     public Task TheCdnRespondsThenWith(int first, int second, string flags)
@@ -224,9 +224,9 @@ public sealed class E2eSteps
     public async Task TheInitialCdnRequestHasNoHeader(string header)
         => Assert.False((await NthCdnRequestAsync(1)).HasHeader(header), $"initial request unexpectedly carried {header}");
 
-    [StepDefinition(@"^the (\d+)\. CDN request has the ""([^""]*)"" header ""(.*)""$")]
+    [StepDefinition(@"^the (\d+)\. CDN request has the ""([^""]*)"" header (""[^""]*""|'[^']*')$")]
     public async Task TheCdnRequestHasTheHeader(int index, string header, string value)
-        => Assert.Equal(value, (await NthCdnRequestAsync(index)).GetHeader(header));
+        => Assert.Equal(Unquote(value), (await NthCdnRequestAsync(index)).GetHeader(header));
 
     // must settle rather than merely be reached: the interesting assertions here are upper bounds
     [StepDefinition(@"^the CDN has received (\d+) further requests?$")]
@@ -389,6 +389,9 @@ public sealed class E2eSteps
         "FATAL" => ProviderStatus.Fatal,
         _ => throw new ArgumentException($"unknown provider state {state}"),
     };
+
+    // single quotes delimit values that contain double quotes, e.g. ETags
+    private static string Unquote(string quoted) => quoted.Substring(1, quoted.Length - 2);
 
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
