@@ -73,7 +73,7 @@ public sealed class E2eSteps
     private static readonly TimeSpan WaitPollStep = TimeSpan.FromMilliseconds(100);
 
     // how often AssertHoldsForAsync re-checks its condition
-    private static readonly TimeSpan HoldCheckStep = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan HoldCheckInterval = TimeSpan.FromMilliseconds(50);
 
     private static int _scenarioSeq;
 
