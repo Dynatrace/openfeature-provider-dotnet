@@ -34,7 +34,7 @@ jobs:
         needs: release-please
         environment: publish
         permissions:
-            # id-token: write # OIDC token for NuGet trusted publishing
+            id-token: write # OIDC token for NuGet trusted publishing
             contents: read
         if: ${{ fromJSON(needs.release-please.outputs.release_created || false) }}
 
@@ -52,21 +52,17 @@ jobs:
             - name: Pack
               run: dotnet pack src/Dynatrace.OpenFeature --configuration Release --output ./artifacts
 
-            # TODO: enable once NuGet account access and a trusted publishing policy exist
-            # - name: NuGet login
-            #   id: nuget-login
-            #   uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
-            #   with:
-            #       user: <nuget.org account that owns the trusted publishing policy>
-            #
-            # - name: Push to NuGet
-            #   run: |
-            #       dotnet nuget push "./artifacts/*.nupkg" \
-            #         --source https://api.nuget.org/v3/index.json \
-            #         --api-key "$NUGET_API_KEY" \
-            #         --skip-duplicate
-            #   env:
-            #       NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+            - name: NuGet login
+              id: nuget-login
+              uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+              with:
+                  user: Dynatrace
 
-            - name: Push to NuGet (disabled)
-              run: echo "if we had nuget credentials, we would have published something :("
+            - name: Push to NuGet
+              run: |
+                  dotnet nuget push "./artifacts/*.nupkg" \
+                    --source https://api.nuget.org/v3/index.json \
+                    --api-key "$NUGET_API_KEY" \
+                    --skip-duplicate
+              env:
+                  NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
