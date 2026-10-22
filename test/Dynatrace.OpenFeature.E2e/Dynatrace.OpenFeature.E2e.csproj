@@ -23,7 +23,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ReqnrollFeatureFiles Include="../../fm-provider-test-harness/gherkin/cdn.feature" Link="Features/cdn.feature" />
+        <ReqnrollFeatureFiles Include="../../fm-provider-test-harness/gherkin/*.feature" Link="Features/%(Filename)%(Extension)" />
         <None Include="../../fm-provider-test-harness/flags/*.json" Link="flags/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
         <None Include="../../fm-provider-test-harness/version.txt" Link="version.txt" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
