@@ -313,7 +313,7 @@ public sealed class DynatraceProvider : FeatureProvider
     /// <remarks>
     /// Initialization order (per spec 3.1): fetch the flagd config JSON from the CDN, load it into the engine, then
     /// start the poll timer, only once the initial fetch has completed, so it never contends with the first tick
-    /// (spec 2.1.1). A failed initial fetch still starts the timer before rethrowing, so it recovers like any other
+    /// (spec 2.1.1), then open the SSE stream the config advertises. A failed initial fetch still starts the timer before rethrowing, so it recovers like any other
     /// failure (spec 2.4); otherwise a transient 5xx at startup would strand the provider in the error state with
     /// nothing scheduled to retry.
     /// </remarks>
@@ -329,9 +329,10 @@ public sealed class DynatraceProvider : FeatureProvider
         StartEventPump();
 
         Exception? initFailure = null;
+        string? initialConfig = null;
         try
         {
-            await LoadInitialConfigurationAsync(cancellationToken).ConfigureAwait(false);
+            initialConfig = await LoadInitialConfigurationAsync(cancellationToken).ConfigureAwait(false);
             SetState(ProviderStatus.Ready);
         }
         catch (OperationCanceledException)
@@ -352,6 +353,11 @@ public sealed class DynatraceProvider : FeatureProvider
         StartPolling();
         _metricsFlusher.Start();
 
+        if (initialConfig is not null)
+        {
+            SyncSse(initialConfig);
+        }
+
         if (initFailure is not null)
         {
             ExceptionDispatchInfo.Capture(initFailure).Throw();
@@ -360,7 +366,7 @@ public sealed class DynatraceProvider : FeatureProvider
         _logger?.LogInformation("Dynatrace provider initialized successfully");
     }
 
-    private async Task LoadInitialConfigurationAsync(CancellationToken cancellationToken)
+    private async Task<string> LoadInitialConfigurationAsync(CancellationToken cancellationToken)
     {
         // Loads the config JSON schemas, so that the initial config and every polled one is validated.
         await _flagdCore.InitializeAsync(cancellationToken).ConfigureAwait(false);
@@ -394,9 +400,7 @@ public sealed class DynatraceProvider : FeatureProvider
         }
 
         _fetcher.Commit();
-
-        // spec 3.1 step 3
-        SyncSse(body);
+        return body;
     }
 
     private void StartPolling()
@@ -418,15 +422,6 @@ public sealed class DynatraceProvider : FeatureProvider
             _logger);
         _pollingManager = pollingManager;
         pollingManager.Start();
-
-        // the stream may have opened during initialization, before this manager existed
-        lock (_stateLock)
-        {
-            if (_sseConnected)
-            {
-                pollingManager.Interval = _pollIntervalSseConnected;
-            }
-        }
     }
 
     /// <summary>
