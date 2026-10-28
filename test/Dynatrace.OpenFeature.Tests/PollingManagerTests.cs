@@ -19,7 +19,7 @@ public class PollingManagerTests : IDisposable
 
     private PollingManager? _manager;
 
-    public void Dispose() => _manager?.Stop();
+    public void Dispose() => _manager?.Dispose();
 
     private PollingManager Create(
         Func<CancellationToken, Task<FetchResult>> fetchFlags,
@@ -273,7 +273,7 @@ public class PollingManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task Stop_PreventsFurtherPolling()
+    public async Task Dispose_PreventsFurtherPolling()
     {
         var polls = 0;
         var firstPoll = new Latch();
@@ -286,7 +286,7 @@ public class PollingManagerTests : IDisposable
         }).Start();
 
         Assert.True(await firstPoll.WaitAsync(Timeout2s));
-        _manager!.Stop();
+        _manager!.Dispose();
 
         await Task.Delay(100); // let an in-flight poll settle
         var countAfterStop = Volatile.Read(ref polls);
@@ -295,7 +295,7 @@ public class PollingManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task Stop_CancelsTheInFlightFetchWithoutReportingAFailure()
+    public async Task Dispose_CancelsTheInFlightFetchWithoutReportingAFailure()
     {
         var started = new Latch();
         var observedCancellation = new Latch();
@@ -323,7 +323,7 @@ public class PollingManagerTests : IDisposable
             }).Start();
 
         Assert.True(await started.WaitAsync(Timeout2s));
-        _manager!.Stop();
+        _manager!.Dispose();
 
         Assert.True(await observedCancellation.WaitAsync(Timeout2s));
         await Task.Delay(50);
@@ -416,7 +416,7 @@ public class PollingManagerTests : IDisposable
             }).Start();
 
         Assert.True(await sampled.WaitAsync(TimeSpan.FromSeconds(3)), "the overrunning poll should run to completion, not be cancelled");
-        _manager!.Stop();
+        _manager!.Dispose();
 
         Assert.False(firstWasCancelled); // a contended tick must not cancel the in-flight fetch
         Assert.Equal(1, contendedAttempts); // contended ticks must not start a second fetch

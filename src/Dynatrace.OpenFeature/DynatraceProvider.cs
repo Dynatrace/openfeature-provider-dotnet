@@ -441,7 +441,7 @@ public sealed class DynatraceProvider : FeatureProvider
             StopSse();
         }
 
-        _pollingManager?.Stop();
+        _pollingManager?.Dispose();
         _shutdownCts.Cancel();
 
         try
@@ -601,7 +601,7 @@ public sealed class DynatraceProvider : FeatureProvider
         }
 
         _sseManager = null;
-        manager.Stop();
+        manager.Dispose();
         _sseConnected = false;
         _pollingManager?.Interval = _pollInterval;
     }

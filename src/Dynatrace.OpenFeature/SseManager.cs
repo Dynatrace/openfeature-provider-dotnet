@@ -9,7 +9,7 @@ namespace Dynatrace.OpenFeature;
 /// <summary>
 /// The SSE change-notification stream. Reconnection, with backoff, is left to the event source (KB section 2.4).
 /// </summary>
-internal sealed class SseManager
+internal sealed class SseManager : IDisposable
 {
     /// <summary>
     /// Drops and reconnects a stream that has gone silent, which raises no error on its own; tolerates one missed
@@ -77,7 +77,7 @@ internal sealed class SseManager
     }
 
     /// <summary>Closes the stream for good; handlers are detached first so a racing event goes nowhere.</summary>
-    public void Stop()
+    public void Dispose()
     {
         EventSource? source;
         lock (_lock)

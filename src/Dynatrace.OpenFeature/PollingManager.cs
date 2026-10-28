@@ -23,7 +23,7 @@ namespace Dynatrace.OpenFeature;
 /// announced <c>Last-Modified</c>, and issued once the slot frees unless the completed fetch already satisfied it.
 /// </para>
 /// </remarks>
-internal sealed class PollingManager
+internal sealed class PollingManager : IDisposable
 {
     /// <summary>Stands in for an announcement without <c>Last-Modified</c>, so it is never coalesced away or dropped.</summary>
     private static readonly DateTimeOffset LastModifiedUnknown = DateTimeOffset.MaxValue;
@@ -103,7 +103,7 @@ internal sealed class PollingManager
     /// <summary>
     /// Stops polling and cancels any in-flight fetch.
     /// </summary>
-    public void Stop()
+    public void Dispose()
     {
         lock (_lock)
         {
@@ -219,7 +219,7 @@ internal sealed class PollingManager
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // only Stop() cancels this token, so cancellation means stopping, not a poll failure
+            // only Dispose() cancels this token, so cancellation means stopping, not a poll failure
             _logger?.LogDebug("poll cancelled (shutting down)");
         }
         catch (Exception e)
