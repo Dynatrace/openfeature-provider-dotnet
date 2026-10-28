@@ -11,6 +11,12 @@ public class PollingManagerTests : IDisposable
     private static readonly TimeSpan Timeout2s = TimeSpan.FromSeconds(2);
     private static readonly IReadOnlyList<string> NoKeys = Array.Empty<string>();
 
+    // no tick fires during a test, so every fetch is out-of-band
+    private static readonly TimeSpan NoTicks = TimeSpan.FromHours(1);
+
+    private static readonly DateTimeOffset Older = DateTimeOffset.FromUnixTimeSeconds(1_704_067_200);
+    private static readonly DateTimeOffset Newer = Older.AddDays(1);
+
     private PollingManager? _manager;
 
     public void Dispose() => _manager?.Stop();
@@ -19,6 +25,7 @@ public class PollingManagerTests : IDisposable
         Func<CancellationToken, Task<FetchResult>> fetchFlags,
         Func<string, IReadOnlyList<string>>? storeFlags = null,
         Action? commitFetch = null,
+        Func<DateTimeOffset, bool>? isNewerThanApplied = null,
         Action<IReadOnlyList<string>>? emitChange = null,
         Action? emitSuccess = null,
         Action<string>? emitFailure = null,
@@ -28,6 +35,7 @@ public class PollingManagerTests : IDisposable
             fetchFlags,
             storeFlags ?? (_ => NoKeys),
             commitFetch ?? (() => { }),
+            isNewerThanApplied ?? (_ => true),
             emitChange ?? (_ => { }),
             emitSuccess ?? (() => { }),
             emitFailure ?? (_ => { }),
@@ -443,5 +451,176 @@ public class PollingManagerTests : IDisposable
         Assert.True(await fetched.WaitAsync(Timeout2s));
         Assert.Equal(0, successes); // a skipped fetch must not reset the grace timer
         Assert.Equal(0, failures); // a skipped fetch is not a failure
+    }
+
+    [Fact]
+    public async Task OutOfBandFetch_RunsImmediately()
+    {
+        var fetched = new Latch();
+
+        Create(
+            _ =>
+            {
+                fetched.CountDown();
+                return Task.FromResult(new FetchResult(304, null, null, null));
+            },
+            interval: NoTicks).Start();
+        _manager!.RequestOutOfBandFetch();
+
+        Assert.True(await fetched.WaitAsync(Timeout2s));
+    }
+
+    [Fact]
+    public async Task ContendedOutOfBandFetches_AreCoalescedIntoOneKeepingTheGreatestAnnouncement()
+    {
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new Latch();
+        var attempts = 0;
+        DateTimeOffset? checkedAnnouncement = null;
+
+        Create(
+            async _ =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                {
+                    await gate.Task;
+                }
+                else
+                {
+                    second.CountDown();
+                }
+
+                return new FetchResult(304, null, null, null);
+            },
+            isNewerThanApplied: announced =>
+            {
+                checkedAnnouncement = announced;
+                return true;
+            },
+            interval: NoTicks).Start();
+
+        _manager!.RequestOutOfBandFetch();
+        _manager.RequestOutOfBandFetch(Newer);
+        _manager.RequestOutOfBandFetch(Older); // arrives out of order; must not win
+        gate.SetResult(true);
+
+        Assert.True(await second.WaitAsync(Timeout2s));
+        await Task.Delay(200);
+        Assert.Equal(2, attempts); // the two contended requests coalesce into one
+        Assert.Equal(Newer, checkedAnnouncement);
+    }
+
+    [Fact]
+    public async Task DeferredOutOfBandFetch_IsDroppedWhenTheCompletedFetchAlreadyAppliedIt()
+    {
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var checkedNewer = new Latch();
+        var attempts = 0;
+
+        Create(
+            async _ =>
+            {
+                Interlocked.Increment(ref attempts);
+                await gate.Task;
+                return new FetchResult(304, null, null, null);
+            },
+            isNewerThanApplied: _ =>
+            {
+                checkedNewer.CountDown();
+                return false;
+            },
+            interval: NoTicks).Start();
+
+        _manager!.RequestOutOfBandFetch();
+        _manager.RequestOutOfBandFetch(Older);
+        gate.SetResult(true);
+
+        Assert.True(await checkedNewer.WaitAsync(Timeout2s));
+        await Task.Delay(200);
+        Assert.Equal(1, attempts);
+    }
+
+    [Fact]
+    public async Task DeferredOutOfBandFetch_WithoutAnnouncement_IsNeverDropped()
+    {
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new Latch();
+        var attempts = 0;
+
+        Create(
+            async _ =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                {
+                    await gate.Task;
+                }
+                else
+                {
+                    second.CountDown();
+                }
+
+                return new FetchResult(304, null, null, null);
+            },
+            isNewerThanApplied: _ => false,
+            interval: NoTicks).Start();
+
+        _manager!.RequestOutOfBandFetch();
+        _manager.RequestOutOfBandFetch();
+        gate.SetResult(true);
+
+        Assert.True(await second.WaitAsync(Timeout2s));
+    }
+
+    [Theory]
+    [InlineData(429)]
+    [InlineData(0)] // skipped
+    public async Task UnansweredOutOfBandFetch_StaysPendingUntilTheNextFetch(int status)
+    {
+        var results = new Queue<FetchResult>(new[]
+        {
+            status == 0 ? FetchResult.Skipped : new FetchResult(status, null, null, null),
+            new FetchResult(304, null, null, null),
+            new FetchResult(304, null, null, null),
+        });
+        var fetched = new Latch(3);
+        var attempts = 0;
+
+        Create(
+            _ =>
+            {
+                Interlocked.Increment(ref attempts);
+                fetched.CountDown();
+                lock (results)
+                {
+                    return Task.FromResult(results.Dequeue());
+                }
+            },
+            interval: NoTicks).Start();
+
+        _manager!.RequestOutOfBandFetch(Newer);
+        await Task.Delay(200);
+        Assert.Equal(1, attempts); // re-issuing inside the window would only be skipped again
+
+        // the next fetch completing issues the pending re-fetch
+        _manager.RequestOutOfBandFetch(Older);
+        Assert.True(await fetched.WaitAsync(Timeout2s));
+    }
+
+    [Fact]
+    public async Task Interval_SwitchesTheCadence()
+    {
+        var fetched = new Latch(3);
+
+        Create(
+            _ =>
+            {
+                fetched.CountDown();
+                return Task.FromResult(new FetchResult(304, null, null, null));
+            },
+            interval: NoTicks).Start();
+        _manager!.Interval = TimeSpan.FromMilliseconds(50);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(50), _manager.Interval);
+        Assert.True(await fetched.WaitAsync(Timeout2s));
     }
 }

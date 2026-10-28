@@ -15,6 +15,9 @@ namespace Dynatrace.OpenFeature.E2e;
 internal sealed class MockServer
 {
     private const int ContainerPort = 8080;
+
+    /// <summary>The only path the mock server serves an SSE stream on.</summary>
+    internal const string SsePath = "/sse";
     private const string ImageRepo = "ghcr.io/dynatrace/fm-provider-mock-server";
 
     private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
@@ -101,6 +104,22 @@ internal sealed class MockServer
     }
 
     public async Task<int> CountCdnRequestsAsync() => (await FetchCdnRequestsAsync().ConfigureAwait(false)).Count;
+
+    /// <summary>SSE subscribers currently connected.</summary>
+    public async Task<int> CountSseClientsAsync()
+    {
+        var json = await SendAsync(HttpMethod.Get, "/__control__/sse/clients", null).ConfigureAwait(false);
+        return JsonNode.Parse(json)?["clients"]?.GetValue<int>() ?? 0;
+    }
+
+    /// <summary>Drops every SSE subscriber and refuses new connections for the outage, or until reset when omitted.</summary>
+    public Task DropSseAsync(TimeSpan? outage = null) => SendAsync(
+        HttpMethod.Post,
+        "/__control__/sse/disconnect",
+        outage is null ? null : new JsonObject { ["reconnectSeconds"] = outage.Value.TotalSeconds }.ToJsonString());
+
+    /// <summary>Broadcasts the payload as the data of one SSE event to every connected subscriber.</summary>
+    public Task EmitSseAsync(string payload) => SendAsync(HttpMethod.Post, "/__control__/sse/emit", payload);
 
     private static async Task<string> SendAsync(HttpMethod method, string path, string? json)
     {

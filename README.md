@@ -4,8 +4,7 @@ The official [Dynatrace](https://dynatrace.com) [OpenFeature](https://openfeatur
 
 The provider evaluates flags in-process: on initialization it fetches your flag configuration from the Dynatrace CDN and keeps it up to date in the background, so evaluations are local and do not make a network call.
 
-> **Status:** Early alpha — not yet ready for production use. The flag configuration is refreshed by polling
-> every 10 seconds; push-based change notifications (SSE) are not implemented yet.
+> **Status:** Early alpha; not yet ready for production use.
 
 ## Installation
 
@@ -53,8 +52,23 @@ await Api.Instance.SetProviderAsync(new DynatraceProvider(sdkKey, options));
 | --- | --- | --- | --- |
 | `ConfigOrigin` | `string?` | derived from SDK key | Override the flag configuration origin (scheme, host and optional port; no path). |
 | `MetricsOrigin` | `string?` | derived from SDK key | Override the evaluation metrics ingest origin (scheme, host and optional port; no path). `/v1/metrics` is appended. |
+| `SseEnabled` | `bool` | `true` | Subscribe to streamed change notifications; when `false`, rely on polling alone. |
 | `MetricsFlushInterval` | `TimeSpan` | 30 seconds | How often aggregated evaluation metrics are sent. Zero or negative values fall back to the default with a warning. |
 | `Logger` | `ILogger?` | none | Receives lifecycle messages and flag configuration schema warnings. |
+
+## Keeping the configuration current
+
+The provider keeps its configuration current two ways at once:
+
+- **Change notifications.** It opens a Server-Sent Events connection to the stream your configuration advertises, and
+  re-fetches as soon as a change is announced. The connection reconnects on its own, and the provider follows the
+  stream URL if it is rotated.
+- **Polling.** A conditional `GET` against the CDN runs every 10 seconds. While the notification stream is connected
+  and fetches succeed this relaxes to 10 minutes, since it is only a safety net; it tightens back to 10 seconds
+  whenever the stream is down or a fetch fails.
+
+Neither interval is configurable. Set `SseEnabled = false` to skip the stream entirely; polling then stays at its
+10 second cadence, so changes still arrive, just less promptly.
 
 ## Evaluation metrics
 

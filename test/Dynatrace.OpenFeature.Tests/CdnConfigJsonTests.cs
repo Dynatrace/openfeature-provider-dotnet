@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 
 namespace Dynatrace.OpenFeature.Tests;
@@ -121,4 +122,34 @@ public class CdnConfigJsonTests
 
         Assert.Equal("https://x.example.com", parsed!.EventStreams!.Single()!.Url);
     }
+
+    private static readonly Uri Fallback = new Uri("https://cdn.us.fm.dynatrace.com/server/key.json");
+
+    [Theory]
+    [InlineData( // the structured endpoint shape fm-service emits
+        "[{\"type\":\"sse\",\"endpoint\":{\"origin\":\"https://sse.example.com\",\"requestUri\":\"/event-stream?key=abc\"}}]",
+        "https://sse.example.com/event-stream?key=abc")]
+    [InlineData( // origin defaults to the provider's
+        "[{\"type\":\"sse\",\"endpoint\":{\"requestUri\":\"/sse\"}}]",
+        "https://cdn.us.fm.dynatrace.com/sse")]
+    [InlineData( // a flat url wins over the endpoint
+        "[{\"type\":\"sse\",\"url\":\"https://realtime.example.com/x\",\"endpoint\":{\"requestUri\":\"/ignored\"}}]",
+        "https://realtime.example.com/x")]
+    [InlineData( // other stream types are skipped
+        "[{\"type\":\"grpc\",\"url\":\"https://grpc.example.com\"},{\"type\":\"sse\",\"url\":\"https://sse.example.com\"}]",
+        "https://sse.example.com/")]
+    public void ExtractSseUrl_ResolvesTheFirstSseEntry(string eventStreams, string expected)
+        => Assert.Equal(expected, CdnConfigJson.ExtractSseUrl("{\"eventStreams\":" + eventStreams + "}", Fallback)?.AbsoluteUri);
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"eventStreams\":[]}")]
+    [InlineData("{\"eventStreams\":[{\"type\":\"grpc\",\"url\":\"https://grpc.example.com\"}]}")]
+    [InlineData("{\"eventStreams\":[{\"type\":\"sse\"}]}")]
+    [InlineData("{\"eventStreams\":[{\"type\":\"sse\",\"url\":\"   \"}]}")]
+    [InlineData("{\"eventStreams\":[{\"type\":\"sse\",\"url\":\"ftp://sse.example.com\"}]}")]
+    [InlineData("{\"eventStreams\":[{\"type\":\"sse\"},{\"type\":\"sse\",\"url\":\"https://sse.example.com\"}]}")] // no fall-through
+    [InlineData("not json")]
+    public void ExtractSseUrl_ReturnsNullWithoutAUsableStream(string json)
+        => Assert.Null(CdnConfigJson.ExtractSseUrl(json, Fallback));
 }
