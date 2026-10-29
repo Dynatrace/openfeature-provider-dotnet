@@ -24,8 +24,10 @@ namespace Dynatrace.OpenFeature;
 /// <para>
 /// Wraps the flagd core engine for in-process evaluation. <see cref="InitializeAsync"/> fetches the flag
 /// configuration from the Dynatrace CDN and loads it into the engine, after which every evaluation is local and
-/// makes no network call. The configuration is then kept up to date by polling the CDN every 10 seconds (with ETag
-/// revalidation, so an unchanged configuration costs a 304).
+/// makes no network call. The configuration is then kept up to date by polling the CDN (with ETag revalidation, so an
+/// unchanged configuration costs a 304), and by re-fetching whenever the SSE change-notification stream the
+/// configuration advertises announces a change. Polling runs every 10 seconds, relaxing to every 10 minutes while
+/// the stream is connected and fetches succeed.
 /// </para>
 /// <para>
 /// Evaluations are aggregated in memory by a provider hook and sent to the Dynatrace metrics endpoint in the
@@ -52,10 +54,13 @@ public sealed class DynatraceProvider : FeatureProvider
         RegexOptions.CultureInvariant);
 
     /// <summary>
-    /// Poll interval while no change-notification stream is connected: aggressive, to pick up changes quickly.
-    /// Until a stream is implemented this is the only cadence.
+    /// Poll interval while no change-notification stream is connected, or after a failed fetch: aggressive, to pick
+    /// up changes and recover quickly.
     /// </summary>
     internal static readonly TimeSpan PollIntervalSseDisconnected = TimeSpan.FromSeconds(10);
+
+    /// <summary>Poll interval while the stream is connected and fetches succeed: a safety net.</summary>
+    internal static readonly TimeSpan PollIntervalSseConnected = TimeSpan.FromMinutes(10);
 
     /// <summary>How long the provider stays <c>Stale</c> before escalating to <c>Error</c>.</summary>
     internal static readonly TimeSpan GracePeriod = TimeSpan.FromMinutes(1);
@@ -69,7 +74,9 @@ public sealed class DynatraceProvider : FeatureProvider
     private readonly FlagdCore _flagdCore;
     private readonly CdnFetcher _fetcher;
     private readonly TimeSpan _pollInterval;
+    private readonly TimeSpan _pollIntervalSseConnected;
     private readonly TimeSpan _gracePeriod;
+    private readonly bool _sseEnabled;
     private readonly DynatraceMetricsAggregator _metricsAggregator;
     private readonly EvaluationMetricsFlusher _metricsFlusher;
     private readonly IImmutableList<Hook> _providerHooks;
@@ -93,6 +100,10 @@ public sealed class DynatraceProvider : FeatureProvider
     // grace timer: transitions Stale -> Error after the grace period
     private CancellationTokenSource? _graceCts;
 
+    // guarded by _stateLock, together with the cadence they select
+    private SseManager? _sseManager;
+    private bool _sseConnected;
+
     /// <summary>
     /// Creates a provider from the SDK key. The CDN URL is derived automatically from the key.
     /// </summary>
@@ -114,7 +125,23 @@ public sealed class DynatraceProvider : FeatureProvider
             new CdnFetcher(BuildCdnUrl(sdkKey, options), httpClient, options?.Logger),
             httpClient,
             PollIntervalSseDisconnected,
+            PollIntervalSseConnected,
             GracePeriod)
+    {
+    }
+
+    // tests only: production wiring with a shortened SSE-connected cadence and grace period
+    internal DynatraceProvider(
+        string sdkKey, DynatraceProviderOptions? options, TimeSpan pollIntervalSseConnected, TimeSpan gracePeriod)
+        : this(
+            sdkKey,
+            options,
+            new FlagdCore(new FlagdCoreOptions { Logger = options?.Logger }),
+            new CdnFetcher(BuildCdnUrl(sdkKey, options), SharedHttpClient, options?.Logger),
+            SharedHttpClient,
+            PollIntervalSseDisconnected,
+            pollIntervalSseConnected,
+            gracePeriod)
     {
     }
 
@@ -146,6 +173,20 @@ public sealed class DynatraceProvider : FeatureProvider
         HttpClient metricsHttpClient,
         TimeSpan pollInterval,
         TimeSpan gracePeriod)
+        : this(sdkKey, options, flagdCore, fetcher, metricsHttpClient, pollInterval, PollIntervalSseConnected, gracePeriod)
+    {
+    }
+
+    // tests only: as above, plus the SSE-connected cadence
+    internal DynatraceProvider(
+        string sdkKey,
+        DynatraceProviderOptions? options,
+        FlagdCore flagdCore,
+        CdnFetcher fetcher,
+        HttpClient metricsHttpClient,
+        TimeSpan pollInterval,
+        TimeSpan pollIntervalSseConnected,
+        TimeSpan gracePeriod)
     {
         var trimmedSdkKey = ValidateSdkKey(sdkKey).Value;
         var safeOptions = options ?? new DynatraceProviderOptions();
@@ -155,7 +196,9 @@ public sealed class DynatraceProvider : FeatureProvider
         _flagdCore = flagdCore;
         _fetcher = fetcher;
         _pollInterval = pollInterval;
+        _pollIntervalSseConnected = pollIntervalSseConnected;
         _gracePeriod = gracePeriod;
+        _sseEnabled = safeOptions.SseEnabled;
         _metricsAggregator = new DynatraceMetricsAggregator(logger: _logger);
         _metricsFlusher = new EvaluationMetricsFlusher(
             _metricsAggregator,
@@ -173,6 +216,9 @@ public sealed class DynatraceProvider : FeatureProvider
 
     /// <summary>The provider's own view of its lifecycle state, which it announces to the SDK as events.</summary>
     internal ProviderStatus State => _state;
+
+    /// <summary>The poll/fetch coordinator, or <c>null</c> before <see cref="InitializeAsync"/> has run.</summary>
+    internal PollingManager? PollingManager => _pollingManager;
 
     /// <summary>
     /// Builds the CDN URL of the SDK key's flag configuration: the config origin override when set, otherwise the
@@ -267,7 +313,7 @@ public sealed class DynatraceProvider : FeatureProvider
     /// <remarks>
     /// Initialization order (per spec 3.1): fetch the flagd config JSON from the CDN, load it into the engine, then
     /// start the poll timer, only once the initial fetch has completed, so it never contends with the first tick
-    /// (spec 2.1.1). A failed initial fetch still starts the timer before rethrowing, so it recovers like any other
+    /// (spec 2.1.1), then open the SSE stream the config advertises. A failed initial fetch still starts the timer before rethrowing, so it recovers like any other
     /// failure (spec 2.4); otherwise a transient 5xx at startup would strand the provider in the error state with
     /// nothing scheduled to retry.
     /// </remarks>
@@ -283,9 +329,10 @@ public sealed class DynatraceProvider : FeatureProvider
         StartEventPump();
 
         Exception? initFailure = null;
+        string? initialConfig = null;
         try
         {
-            await LoadInitialConfigurationAsync(cancellationToken).ConfigureAwait(false);
+            initialConfig = await LoadInitialConfigurationAsync(cancellationToken).ConfigureAwait(false);
             SetState(ProviderStatus.Ready);
         }
         catch (OperationCanceledException)
@@ -306,6 +353,11 @@ public sealed class DynatraceProvider : FeatureProvider
         StartPolling();
         _metricsFlusher.Start();
 
+        if (initialConfig is not null)
+        {
+            SyncSse(initialConfig);
+        }
+
         if (initFailure is not null)
         {
             ExceptionDispatchInfo.Capture(initFailure).Throw();
@@ -314,7 +366,7 @@ public sealed class DynatraceProvider : FeatureProvider
         _logger?.LogInformation("Dynatrace provider initialized successfully");
     }
 
-    private async Task LoadInitialConfigurationAsync(CancellationToken cancellationToken)
+    private async Task<string> LoadInitialConfigurationAsync(CancellationToken cancellationToken)
     {
         // Loads the config JSON schemas, so that the initial config and every polled one is validated.
         await _flagdCore.InitializeAsync(cancellationToken).ConfigureAwait(false);
@@ -348,6 +400,7 @@ public sealed class DynatraceProvider : FeatureProvider
         }
 
         _fetcher.Commit();
+        return body;
     }
 
     private void StartPolling()
@@ -361,6 +414,7 @@ public sealed class DynatraceProvider : FeatureProvider
             _fetcher.FetchAsync,
             StoreFlags,
             _fetcher.Commit,
+            _fetcher.IsNewerThanCommitted,
             OnConfigurationChanged,
             OnFetchSuccess,
             OnFetchFailure,
@@ -382,7 +436,12 @@ public sealed class DynatraceProvider : FeatureProvider
 
         _logger?.LogInformation("shutting down Dynatrace provider");
 
-        _pollingManager?.Stop();
+        lock (_stateLock)
+        {
+            StopSse();
+        }
+
+        _pollingManager?.Dispose();
         _shutdownCts.Cancel();
 
         try
@@ -422,6 +481,7 @@ public sealed class DynatraceProvider : FeatureProvider
         {
             var changed = _flagdCore.SetConfigurations(json);
             UpdateMetricsVersionFromFlagSet();
+            SyncSse(json);
             return changed;
         }
         catch (Exception e) when (!(e is OperationCanceledException))
@@ -442,6 +502,11 @@ public sealed class DynatraceProvider : FeatureProvider
     {
         lock (_stateLock)
         {
+            if (_sseConnected)
+            {
+                _pollingManager?.Interval = _pollIntervalSseConnected;
+            }
+
             CancelGraceTimer();
             var current = _state;
             if (Volatile.Read(ref _shutdown) == 0 && (current == ProviderStatus.Stale || current == ProviderStatus.Error))
@@ -461,6 +526,8 @@ public sealed class DynatraceProvider : FeatureProvider
     {
         lock (_stateLock)
         {
+            // fetch at the fast cadence until one succeeds, even with SSE connected
+            _pollingManager?.Interval = _pollInterval;
             if (Volatile.Read(ref _shutdown) == 0 && _state == ProviderStatus.Ready)
             {
                 _state = ProviderStatus.Stale;
@@ -477,6 +544,124 @@ public sealed class DynatraceProvider : FeatureProvider
 
     private void OnConfigurationChanged(IReadOnlyList<string> changedKeys)
         => Emit(ProviderEventTypes.ProviderConfigurationChanged, flagsChanged: changedKeys);
+
+    // -- SSE --
+
+    /// <summary>Follows the stream the stored config advertises; the URL can rotate (KB section 1.5).</summary>
+    private void SyncSse(string configJson)
+    {
+        if (!_sseEnabled)
+        {
+            return;
+        }
+
+        var url = CdnConfigJson.ExtractSseUrl(configJson, _cdnUrl);
+        lock (_stateLock)
+        {
+            if (Volatile.Read(ref _shutdown) == 1)
+            {
+                return;
+            }
+
+            if (url is null)
+            {
+                if (_sseManager is not null)
+                {
+                    _logger?.LogInformation("config no longer advertises an SSE stream; falling back to polling only");
+                    StopSse();
+                }
+
+                return;
+            }
+
+            if (_sseManager?.Url.AbsoluteUri == url.AbsoluteUri)
+            {
+                return;
+            }
+
+            if (_sseManager is not null)
+            {
+                _logger?.LogInformation("SSE stream URL rotated; reconnecting");
+                StopSse();
+            }
+
+            var manager = new SseManager(url, OnSseConnected, OnSseDisconnected, OnSseMessage, _logger);
+            _sseManager = manager;
+            manager.Start();
+        }
+    }
+
+    // Caller holds _stateLock.
+    private void StopSse()
+    {
+        var manager = _sseManager;
+        if (manager is null)
+        {
+            return;
+        }
+
+        _sseManager = null;
+        manager.Dispose();
+        _sseConnected = false;
+        _pollingManager?.Interval = _pollInterval;
+    }
+
+    // a callback from a stream that has since been replaced or stopped; caller holds _stateLock
+    private bool IsSuperseded(SseManager manager) => !ReferenceEquals(manager, _sseManager);
+
+    // SSE only prompts fetches; the cadence relaxes once the catch-up fetch succeeds (KB section 4.1)
+    private void OnSseConnected(SseManager manager)
+    {
+        lock (_stateLock)
+        {
+            if (IsSuperseded(manager))
+            {
+                return;
+            }
+
+            _sseConnected = true;
+        }
+
+        _logger?.LogInformation("SSE connected");
+
+        // catch up on anything announced while the stream was down
+        _pollingManager?.RequestOutOfBandFetch();
+    }
+
+    private void OnSseDisconnected(SseManager manager)
+    {
+        lock (_stateLock)
+        {
+            if (IsSuperseded(manager) || !_sseConnected)
+            {
+                return;
+            }
+
+            _sseConnected = false;
+            _logger?.LogWarning("SSE disconnected; poll interval tightened to {PollInterval}", _pollInterval);
+            _pollingManager?.Interval = _pollInterval;
+        }
+    }
+
+    private void OnSseMessage(SseManager manager, SseMessage message)
+    {
+        lock (_stateLock)
+        {
+            if (IsSuperseded(manager))
+            {
+                return;
+            }
+        }
+
+        if (message.Type != SseMessage.TypeRefetchConfig)
+        {
+            _logger?.LogDebug("ignoring SSE message of type {Type}", message.Type);
+            return;
+        }
+
+        // not dropped up front: second-precision timestamps can tie, and the conditional GET is cheap
+        _pollingManager?.RequestOutOfBandFetch(message.LastModified);
+    }
 
     // -- grace timer --
 

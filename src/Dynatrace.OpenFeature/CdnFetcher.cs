@@ -93,6 +93,13 @@ internal sealed class CdnFetcher
         }
     }
 
+    /// <summary>Whether <paramref name="lastModified"/> is newer than the configuration last committed.</summary>
+    public bool IsNewerThanCommitted(DateTimeOffset lastModified)
+    {
+        var committed = _state.LastModifiedAt;
+        return committed is null || lastModified > committed;
+    }
+
     /// <summary>Returns <c>true</c> if a 429 Retry-After period is still active.</summary>
     public bool IsRateLimited => DateTime.UtcNow.Ticks < Interlocked.Read(ref _rateLimitedUntilTicks);
 

@@ -43,6 +43,12 @@ public sealed class DynatraceProviderOptions
         set => _metricsOriginUri = value is null ? null : ParseOrigin(value, nameof(MetricsOrigin));
     }
 
+    /// <summary>
+    /// Whether to subscribe to the SSE change-notification stream the flag configuration advertises. Defaults to
+    /// <c>true</c>; when <c>false</c>, the provider polls only, every 10 seconds.
+    /// </summary>
+    public bool SseEnabled { get; set; } = true;
+
     /// <summary>How often evaluation metrics are sent. Defaults to 30 seconds; non-positive values fall back to it.</summary>
     public TimeSpan MetricsFlushInterval { get; set; } = DefaultMetricsFlushInterval;
 

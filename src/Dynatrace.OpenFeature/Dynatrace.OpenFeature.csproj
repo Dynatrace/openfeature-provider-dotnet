@@ -24,6 +24,7 @@
         <PackageReference Include="OpenFeature.Providers.Flagd.Core" />
         <PackageReference Include="System.Text.Json" />
         <PackageReference Include="System.Collections.Immutable" />
+        <PackageReference Include="LaunchDarkly.EventSource" />
     </ItemGroup>
 
     <ItemGroup>
