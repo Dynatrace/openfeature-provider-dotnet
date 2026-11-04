@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha](https://github.com/Dynatrace/openfeature-provider-dotnet/compare/v0.0.2-alpha...v0.1.0-alpha) (2026-10-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* update flagd-core to the latest major ([#11](https://github.com/Dynatrace/openfeature-provider-dotnet/issues/11))
+
+### ✨ New Features
+
+* implement SSE ([#8](https://github.com/Dynatrace/openfeature-provider-dotnet/issues/8)) ([9c7a48a](https://github.com/Dynatrace/openfeature-provider-dotnet/commit/9c7a48a90f64230db7c633a822c135e2a5bca844))
+* update flagd-core to the latest major ([#11](https://github.com/Dynatrace/openfeature-provider-dotnet/issues/11)) ([99c8034](https://github.com/Dynatrace/openfeature-provider-dotnet/commit/99c8034712110b86d31c4a4094646376bdc6431f))
+
 ## [0.0.2-alpha](https://github.com/Dynatrace/openfeature-provider-dotnet/compare/v0.0.1-alpha...v0.0.2-alpha) (2026-10-26)
 
 

@@ -9,7 +9,7 @@ The provider evaluates flags in-process: on initialization it fetches your flag 
 ## Installation
 
 ```bash
-dotnet add package Dynatrace.OpenFeature --version 0.0.2-alpha # x-release-please-version
+dotnet add package Dynatrace.OpenFeature --version 0.1.0-alpha # x-release-please-version
 ```
 
 ## Usage
