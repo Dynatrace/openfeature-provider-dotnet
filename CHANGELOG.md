@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.1-alpha](https://github.com/Dynatrace/openfeature-provider-dotnet/compare/v0.1.0-alpha...v0.1.1-alpha) (2026-11-18)
+
+
+### 🐛 Bug Fixes
+
+* Bump the minor-and-patch group with 4 updates ([#19](https://github.com/Dynatrace/openfeature-provider-dotnet/issues/19)) ([b6f75e0](https://github.com/Dynatrace/openfeature-provider-dotnet/commit/b6f75e0bc48de2754f5643eab4582c1d7d7488b6))
+* **deps:** bump OpenFeature.Providers.Flagd.Core to 2.0.2 ([#15](https://github.com/Dynatrace/openfeature-provider-dotnet/issues/15)) ([b6ab3bb](https://github.com/Dynatrace/openfeature-provider-dotnet/commit/b6ab3bb73b364ffe9ebf8e59904d6cf2f7ae6937))
+
+
+### 🧹 Chore
+
+* fix ci dead-end if no releases ([#24](https://github.com/Dynatrace/openfeature-provider-dotnet/issues/24)) ([6510deb](https://github.com/Dynatrace/openfeature-provider-dotnet/commit/6510deb5686422aae3898eab8ec1c411e7ae06a1))
+
 ## [0.1.0-alpha](https://github.com/Dynatrace/openfeature-provider-dotnet/compare/v0.0.2-alpha...v0.1.0-alpha) (2026-10-30)
 
 
