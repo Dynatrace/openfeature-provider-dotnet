@@ -1,0 +1,35 @@
+# security updates are enabled in repo settings, not here
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    # skip brand-new releases
+    cooldown:
+      default-days: 3
+    # fix(deps) triggers a patch release
+    commit-message:
+      prefix: fix
+      include: scope
+    groups:
+      # majors stay separate and aren't automerged
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # skip brand-new releases
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: ci
+    groups:
+      # majors stay separate and aren't automerged
+      github-actions:
+        update-types:
+          - minor
+          - patch
