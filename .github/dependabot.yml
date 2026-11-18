@@ -28,6 +28,8 @@ updates:
     commit-message:
       prefix: ci
     groups:
+      # majors stay separate and aren't automerged
       github-actions:
-        patterns:
-          - "*"
+        update-types:
+          - minor
+          - patch
