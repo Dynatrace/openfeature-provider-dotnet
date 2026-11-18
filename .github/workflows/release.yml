@@ -32,7 +32,7 @@ jobs:
               run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+                  BRANCH: ${{ fromJSON(steps.release.outputs.pr || '{}').headBranchName }}
 
         outputs:
             release_created: ${{ steps.release.outputs.release_created }}
