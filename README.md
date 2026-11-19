@@ -56,6 +56,25 @@ await Api.Instance.SetProviderAsync(new DynatraceProvider(sdkKey, options));
 | `MetricsFlushInterval` | `TimeSpan` | 30 seconds | How often aggregated evaluation metrics are sent. Zero or negative values fall back to the default with a warning. |
 | `Logger` | `ILogger?` | none | Receives lifecycle messages and flag configuration schema warnings. |
 
+### Environment variables
+
+The SDK key and these options can also be set with environment variables, read once at construction. A value set in
+code wins over the environment variable, which wins over the default; an empty variable counts as unset.
+
+| Environment variable | Option | Format |
+| --- | --- | --- |
+| `DT_FM_SDK_KEY` | SDK key (constructor argument) | string |
+| `DT_FM_CONFIG_ORIGIN` | `ConfigOrigin` | URL origin |
+| `DT_FM_METRICS_ORIGIN` | `MetricsOrigin` | URL origin |
+| `DT_FM_SSE_DISABLED` | `SseEnabled` (inverted) | `true` or `false` |
+
+> **Note:** if `ConfigOrigin` is set, carefully consider whether `MetricsOrigin` should be set too; an SDK proxy or custom host typically serves both.
+
+```csharp
+// SDK key and options from the environment
+await Api.Instance.SetProviderAsync(new DynatraceProvider());
+```
+
 ## Keeping the configuration current
 
 The provider keeps its configuration current two ways at once:

@@ -16,13 +16,21 @@ public sealed class DynatraceProviderOptions
     // distinct flag keys past which new flags are dropped
     internal const int DefaultMetricsHardCapDistinctFlags = 2_000;
 
+    internal const string ConfigOriginEnvVar = "DT_FM_CONFIG_ORIGIN";
+    internal const string MetricsOriginEnvVar = "DT_FM_METRICS_ORIGIN";
+    internal const string SseDisabledEnvVar = "DT_FM_SSE_DISABLED";
+
     private Uri? _configOriginUri;
     private Uri? _metricsOriginUri;
+
+    // null means not set in code, so the env var applies
+    private bool? _sseEnabled;
 
     /// <summary>
     /// Overrides the flag configuration origin: scheme, host and optional port, with no path, query,
     /// fragment or user info (e.g. <c>https://cdn.eu.fm.dynatracelabs.com</c>). For dev/labs environments
-    /// or a proxy; the production origin is derived from the SDK key when this is <c>null</c>.
+    /// or a proxy; the production origin is derived from the SDK key when this is <c>null</c>. If set, carefully
+    /// consider whether <see cref="MetricsOrigin"/> should be set too; an SDK proxy or custom host typically serves both.
     /// </summary>
     /// <exception cref="ArgumentException">The value is blank or not a bare http(s) origin.</exception>
     public string? ConfigOrigin
@@ -47,7 +55,11 @@ public sealed class DynatraceProviderOptions
     /// Whether to subscribe to the SSE change-notification stream the flag configuration advertises. Defaults to
     /// <c>true</c>; when <c>false</c>, the provider polls only, every 10 seconds.
     /// </summary>
-    public bool SseEnabled { get; set; } = true;
+    public bool SseEnabled
+    {
+        get => _sseEnabled ?? true;
+        set => _sseEnabled = value;
+    }
 
     /// <summary>How often evaluation metrics are sent. Defaults to 30 seconds; non-positive values fall back to it.</summary>
     public TimeSpan MetricsFlushInterval { get; set; } = DefaultMetricsFlushInterval;
@@ -63,6 +75,50 @@ public sealed class DynatraceProviderOptions
 
     /// <summary>The validated, canonical metrics origin override, or <c>null</c> to derive it from the SDK key.</summary>
     internal Uri? MetricsOriginUri => _metricsOriginUri;
+
+    /// <summary>
+    /// Returns a copy with each option not set in code taken from its environment variable, when that is non-blank.
+    /// </summary>
+    /// <exception cref="ArgumentException">An environment variable holds an invalid value.</exception>
+    internal DynatraceProviderOptions WithEnvironment(Func<string, string?> getEnv)
+    {
+        var configOriginEnv = ReadEnv(getEnv, ConfigOriginEnvVar);
+        var metricsOriginEnv = ReadEnv(getEnv, MetricsOriginEnvVar);
+        var sseDisabledEnv = ReadEnv(getEnv, SseDisabledEnvVar);
+
+        return new DynatraceProviderOptions
+        {
+            _configOriginUri = _configOriginUri
+                ?? (configOriginEnv is null ? null : ParseOrigin(configOriginEnv, ConfigOriginEnvVar)),
+            _metricsOriginUri = _metricsOriginUri
+                ?? (metricsOriginEnv is null ? null : ParseOrigin(metricsOriginEnv, MetricsOriginEnvVar)),
+            _sseEnabled = _sseEnabled ?? (sseDisabledEnv is null ? null : !ParseBool(sseDisabledEnv, SseDisabledEnvVar)),
+            MetricsFlushInterval = MetricsFlushInterval,
+            Logger = Logger,
+        };
+    }
+
+    /// <summary>The trimmed value of <paramref name="name"/>, or <c>null</c> when it is unset or blank.</summary>
+    internal static string? ReadEnv(Func<string, string?> getEnv, string name)
+    {
+        var value = getEnv(name);
+        return value is null || string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static bool ParseBool(string value, string fieldName)
+    {
+        if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        throw new ArgumentException($"{fieldName} must be true or false; got: \"{value}\"", fieldName);
+    }
 
     /// <summary>
     /// Validates <paramref name="value"/> as a bare origin and returns it in canonical form.

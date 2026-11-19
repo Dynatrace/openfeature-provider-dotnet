@@ -48,6 +48,8 @@ public sealed class DynatraceProvider : FeatureProvider
 {
     internal const string ProviderName = "dynatrace";
 
+    internal const string SdkKeyEnvVar = "DT_FM_SDK_KEY";
+
     /// <summary>SDK key format: <c>{token}.server_{geo}_{publicRandom}.{secret}_{sha1}</c>.</summary>
     internal static readonly Regex KeyPattern = new Regex(
         "^(?<token>dt[0-9]{2})\\.(?<type>server)_(?<geo>[a-z]{2,})_(?<publicRandom>[a-zA-Z0-9]{10,})\\.(?<secret>[a-fA-F0-9]{32,})_(?<sha>[a-f0-9]{10,})$",
@@ -107,11 +109,30 @@ public sealed class DynatraceProvider : FeatureProvider
     /// <summary>
     /// Creates a provider from the SDK key. The CDN URL is derived automatically from the key.
     /// </summary>
-    /// <param name="sdkKey">The SDK key, <c>dt{NN}.server_{geo}_{rand}.{secret}_{sha}</c>.</param>
+    /// <remarks>
+    /// The SDK key and any option not set in code are read from the <c>DT_FM_SDK_KEY</c>,
+    /// <c>DT_FM_CONFIG_ORIGIN</c>, <c>DT_FM_METRICS_ORIGIN</c> and <c>DT_FM_SSE_DISABLED</c> environment variables;
+    /// values set in code take precedence.
+    /// </remarks>
+    /// <param name="sdkKey">
+    /// The SDK key, <c>dt{NN}.server_{geo}_{rand}.{secret}_{sha}</c>; when null or blank, <c>DT_FM_SDK_KEY</c> is used.
+    /// </param>
     /// <param name="options">Optional configuration (e.g. a config origin override).</param>
-    /// <exception cref="ArgumentException"><paramref name="sdkKey"/> is null, blank or malformed.</exception>
-    public DynatraceProvider(string sdkKey, DynatraceProviderOptions? options = null)
-        : this(sdkKey, options, new FlagdCore(new FlagdCoreOptions { Logger = options?.Logger }), SharedHttpClient)
+    /// <exception cref="ArgumentException">
+    /// No SDK key is given in code or the environment, the key is malformed, or an environment variable is invalid.
+    /// </exception>
+    public DynatraceProvider(string? sdkKey = null, DynatraceProviderOptions? options = null)
+        : this(sdkKey, options, Environment.GetEnvironmentVariable)
+    {
+    }
+
+    // tests only: as above, with an injected environment lookup
+    internal DynatraceProvider(string? sdkKey, DynatraceProviderOptions? options, Func<string, string?> getEnv)
+        : this(
+            ResolveSdkKey(sdkKey, getEnv),
+            (options ?? new DynatraceProviderOptions()).WithEnvironment(getEnv),
+            new FlagdCore(new FlagdCoreOptions { Logger = options?.Logger }),
+            SharedHttpClient)
     {
     }
 
@@ -251,6 +272,25 @@ public sealed class DynatraceProvider : FeatureProvider
         return new Uri($"https://metrics.{geo}.fm.dynatrace.com/v1/metrics");
     }
 
+    /// <summary>The SDK key set in code, else the validated <c>DT_FM_SDK_KEY</c> value.</summary>
+    /// <exception cref="ArgumentException">Neither supplies a key, or the environment key is malformed.</exception>
+    internal static string ResolveSdkKey(string? sdkKey, Func<string, string?> getEnv)
+    {
+        if (sdkKey is not null && !string.IsNullOrWhiteSpace(sdkKey))
+        {
+            return sdkKey;
+        }
+
+        var envKey = DynatraceProviderOptions.ReadEnv(getEnv, SdkKeyEnvVar);
+        if (envKey is null)
+        {
+            throw new ArgumentException($"SDK key is required; pass sdkKey or set {SdkKeyEnvVar}", nameof(sdkKey));
+        }
+
+        ValidateSdkKey(envKey, SdkKeyEnvVar);
+        return envKey;
+    }
+
     internal static TimeSpan ResolveMetricsFlushInterval(TimeSpan interval, ILogger? logger)
     {
         if (interval <= TimeSpan.Zero || interval.TotalMilliseconds < 1)
@@ -277,11 +317,12 @@ public sealed class DynatraceProvider : FeatureProvider
         return plus >= 0 ? version.Substring(0, plus) : version;
     }
 
-    private static Match ValidateSdkKey(string? sdkKey)
+    private static Match ValidateSdkKey(string? sdkKey, string paramName = "sdkKey")
     {
+        var label = paramName == nameof(sdkKey) ? "key" : paramName;
         if (sdkKey is null || string.IsNullOrWhiteSpace(sdkKey))
         {
-            throw new ArgumentException("key must not be null or blank", nameof(sdkKey));
+            throw new ArgumentException($"{label} must not be null or blank", paramName);
         }
 
         var trimmed = sdkKey.Trim();
@@ -292,8 +333,8 @@ public sealed class DynatraceProvider : FeatureProvider
             var lastDot = trimmed.LastIndexOf('.');
             var publicPart = lastDot > 0 ? trimmed.Substring(0, lastDot) : "<redacted>";
             throw new ArgumentException(
-                $"invalid key (public: '{publicPart}'); expected dt{{NN}}.server_{{geo}}_{{rand}}.{{secret}}_{{sha}}",
-                nameof(sdkKey));
+                $"invalid {label} (public: '{publicPart}'); expected dt{{NN}}.server_{{geo}}_{{rand}}.{{secret}}_{{sha}}",
+                paramName);
         }
 
         return match;

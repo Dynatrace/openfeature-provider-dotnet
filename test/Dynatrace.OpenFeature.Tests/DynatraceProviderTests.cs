@@ -14,7 +14,11 @@ public class DynatraceProviderTests
     // no-sleep retry strategy for fast tests
     private static readonly RetryStrategy NoDelayRetry = new RetryStrategy(new Random(42), (_, _) => Task.CompletedTask);
 
+    private static readonly Func<string, string?> NoEnv = _ => null;
+
     private readonly MockHttpServer _server = new MockHttpServer();
+
+    private static Func<string, string?> Env(string name, string value) => n => n == name ? value : null;
 
     private DynatraceProvider Provider()
     {
@@ -322,7 +326,70 @@ public class DynatraceProviderTests
     [InlineData("   ")]
     public void Constructor_RejectsBlankKey(string? sdkKey)
     {
-        Assert.Throws<ArgumentException>(() => new DynatraceProvider(sdkKey!));
+        var ex = Assert.Throws<ArgumentException>(() => new DynatraceProvider(sdkKey, null, NoEnv));
+
+        Assert.Contains("DT_FM_SDK_KEY", ex.Message); // points users at the env var
+    }
+
+    [Fact]
+    public void Constructor_UsesSdkKeyFromEnv_WhenNotSetInCode()
+    {
+        var provider = new DynatraceProvider(null, null, Env("DT_FM_SDK_KEY", TestFixtures.SdkKey));
+
+        Assert.Equal("dynatrace", provider.GetMetadata().Name);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ResolveSdkKey_UsesEnv_WhenCodeKeyIsBlank(string? sdkKey)
+    {
+        var resolved = DynatraceProvider.ResolveSdkKey(sdkKey, Env("DT_FM_SDK_KEY", $"  {TestFixtures.SdkKey}  "));
+
+        Assert.Equal(TestFixtures.SdkKey, resolved);
+    }
+
+    [Fact]
+    public void ResolveSdkKey_CodeKeyWinsOverEnv()
+    {
+        const string envKey = "dt01.server_eu_zyxwvu9876.00000000000000000000000000000000_0000000000";
+
+        var resolved = DynatraceProvider.ResolveSdkKey(TestFixtures.SdkKey, Env("DT_FM_SDK_KEY", envKey));
+
+        Assert.Equal(TestFixtures.SdkKey, resolved);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ResolveSdkKey_BlankEnvKey_IsTreatedAsUnset(string envKey)
+    {
+        var ex = Assert.Throws<ArgumentException>(() => DynatraceProvider.ResolveSdkKey(null, Env("DT_FM_SDK_KEY", envKey)));
+
+        Assert.Contains("DT_FM_SDK_KEY", ex.Message);
+        Assert.Contains("SDK key is required", ex.Message);
+    }
+
+    [Fact]
+    public void ResolveSdkKey_MalformedEnvKey_ThrowsNamingTheEnvVarWithoutTheSecret()
+    {
+        const string secret = "de848e97a9cc4cc78aae568e65f49a9d_a1b2c3d4e5X";
+
+        var ex = Assert.Throws<ArgumentException>(
+            () => DynatraceProvider.ResolveSdkKey(null, Env("DT_FM_SDK_KEY", $"dt01.server_us_abcdef1234.{secret}")));
+
+        Assert.Contains("DT_FM_SDK_KEY", ex.Message);
+        Assert.DoesNotContain(secret, ex.Message);
+    }
+
+    [Fact]
+    public void Constructor_InvalidEnvOrigin_Throws()
+    {
+        var ex = Assert.Throws<ArgumentException>(
+            () => new DynatraceProvider(TestFixtures.SdkKey, null, Env("DT_FM_CONFIG_ORIGIN", "not a uri")));
+
+        Assert.Contains("DT_FM_CONFIG_ORIGIN", ex.Message);
     }
 
     [Theory]
