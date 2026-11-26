@@ -11,7 +11,7 @@
              declared explicitly: this library is compiled against exactly these assemblies, so they must flow to every
              consumer. A consumer on a newer TFM would otherwise resolve the core's TFM-specific dependency group, get the
              older inbox assemblies, and fail to load ours. -->
-        <PackageVersion Include="System.Text.Json" Version="10.0.15" />
+        <PackageVersion Include="System.Text.Json" Version="11.0.0" />
         <PackageVersion Include="System.Collections.Immutable" Version="10.0.15" />
         <PackageVersion Include="LaunchDarkly.EventSource" Version="6.0.0" />
 
